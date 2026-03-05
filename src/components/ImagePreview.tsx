@@ -15,6 +15,21 @@ interface ImagePreviewProps {
   imageNaturalSize?: { width: number; height: number };
 }
 
+function getRenderedImageRect(img: HTMLImageElement) {
+  const natW = img.naturalWidth;
+  const natH = img.naturalHeight;
+  const elemW = img.clientWidth;
+  const elemH = img.clientHeight;
+
+  const scale = Math.min(elemW / natW, elemH / natH);
+  const renderedW = natW * scale;
+  const renderedH = natH * scale;
+  const offsetX = (elemW - renderedW) / 2;
+  const offsetY = (elemH - renderedH) / 2;
+
+  return { offsetX, offsetY, renderedW, renderedH, natW, natH };
+}
+
 export function ImagePreview({
   originalUrl,
   normalizedUrl,
@@ -33,12 +48,19 @@ export function ImagePreview({
     (e: React.MouseEvent<HTMLImageElement>) => {
       if (clickMode === "off" || !onManualCellAdd || !imgRef.current) return;
 
-      const rect = imgRef.current.getBoundingClientRect();
-      const scaleX = (imageNaturalSize?.width || imgRef.current.naturalWidth) / rect.width;
-      const scaleY = (imageNaturalSize?.height || imgRef.current.naturalHeight) / rect.height;
+      const img = imgRef.current;
+      const rect = img.getBoundingClientRect();
+      const { offsetX, offsetY, renderedW, renderedH } = getRenderedImageRect(img);
+      const natW = imageNaturalSize?.width || img.naturalWidth;
+      const natH = imageNaturalSize?.height || img.naturalHeight;
 
-      const x = Math.round((e.clientX - rect.left) * scaleX);
-      const y = Math.round((e.clientY - rect.top) * scaleY);
+      const clickX = e.clientX - rect.left - offsetX;
+      const clickY = e.clientY - rect.top - offsetY;
+
+      if (clickX < 0 || clickY < 0 || clickX > renderedW || clickY > renderedH) return;
+
+      const x = Math.round((clickX / renderedW) * natW);
+      const y = Math.round((clickY / renderedH) * natH);
 
       onManualCellAdd({ x, y, type: clickMode });
     },
@@ -136,15 +158,18 @@ export function ImagePreview({
                   className={`w-full h-auto rounded max-h-[500px] object-contain bg-black ${cursorClass}`}
                   onClick={handleImageClick}
                 />
-                {/* Render manual cells as overlays */}
-                {manualCells.length > 0 && imgRef.current && (
+                {manualCells.length > 0 && imgRef.current && (() => {
+                  const { offsetX, offsetY, renderedW, renderedH, natW, natH } = getRenderedImageRect(imgRef.current);
+                  return (
                   <svg
-                    className="absolute top-0 left-0 pointer-events-none"
+                    className="absolute pointer-events-none"
                     style={{
-                      width: imgRef.current.clientWidth,
-                      height: imgRef.current.clientHeight,
+                      left: offsetX,
+                      top: offsetY,
+                      width: renderedW,
+                      height: renderedH,
                     }}
-                    viewBox={`0 0 ${imageNaturalSize?.width || imgRef.current.naturalWidth} ${imageNaturalSize?.height || imgRef.current.naturalHeight}`}
+                    viewBox={`0 0 ${imageNaturalSize?.width || natW} ${imageNaturalSize?.height || natH}`}
                     preserveAspectRatio="xMidYMid meet"
                   >
                     {manualCells.map((cell, idx) => (
@@ -172,7 +197,8 @@ export function ImagePreview({
                       </g>
                     ))}
                   </svg>
-                )}
+                  );
+                })()}
               </div>
             ) : (
               <div className="flex items-center justify-center h-[300px] text-muted-foreground text-sm">
