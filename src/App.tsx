@@ -1,11 +1,10 @@
-import { useState, useCallback, useEffect, useRef } from "react";
-import { Microscope, Play, Download, Loader2, Trash2, MousePointer, Undo2 } from "lucide-react";
+import { useState, useCallback, useEffect, useRef, useMemo } from "react";
+import { Microscope, Download, Loader2, Trash2, MousePointer, Undo2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { ImageDropzone } from "@/components/ImageDropzone";
 import { ProcessingControls } from "@/components/ProcessingControls";
 import { ImagePreview } from "@/components/ImagePreview";
 import { ResultsTable } from "@/components/ResultsTable";
-import { ProgressBar } from "@/components/ProgressBar";
 import { useImageProcessor } from "@/hooks/useImageProcessor";
 import { downloadCSV } from "@/lib/csvExport";
 import { DEFAULT_PARAMS } from "@/lib/types";
@@ -18,12 +17,9 @@ function App() {
   const [images, setImages] = useState<LoadedImage[]>([]);
   const [selectedId, setSelectedId] = useState<string | undefined>();
 
-  // Global baseline params
   const [globalParams, setGlobalParams] = useState<ProcessingParams>(DEFAULT_PARAMS);
-  // Per-image overrides (image id -> params). Missing = use global.
   const [imageParamsMap, setImageParamsMap] = useState<Map<string, ProcessingParams>>(new Map());
 
-  const [results, setResults] = useState<CellCountResult[]>([]);
   const [annotatedUrl, setAnnotatedUrl] = useState<string | undefined>();
   const [normalizedUrl, setNormalizedUrl] = useState<string | undefined>();
   const [previewProcessing, setPreviewProcessing] = useState(false);
@@ -31,31 +27,56 @@ function App() {
   const [manualCells, setManualCells] = useState<Map<string, ManualCell[]>>(new Map());
   const [imageNaturalSize, setImageNaturalSize] = useState<{ width: number; height: number } | undefined>();
   const [liveResult, setLiveResult] = useState<CellCountResult | undefined>();
+  const [analysisProgress, setAnalysisProgress] = useState<{ current: number; total: number } | null>(null);
 
   const normalizeQueueRef = useRef<LoadedImage[]>([]);
   const normalizingRef = useRef(false);
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const cachedForImageRef = useRef<string>("");
+  const globalParamsRef = useRef(globalParams);
+  globalParamsRef.current = globalParams;
+  const imageParamsMapRef = useRef(imageParamsMap);
+  imageParamsMapRef.current = imageParamsMap;
 
   const {
-    ready, loading, processing, progress, error,
-    normalizeImage, cacheAndPreview, fastReThreshold, processBatch,
+    ready, loading, error,
+    normalizeImage, cacheAndPreview, fastReThreshold,
   } = useImageProcessor();
 
   const selectedImage = images.find((img) => img.id === selectedId);
   const currentManualCells = selectedImage ? (manualCells.get(selectedImage.id) || []) : [];
 
-  // Effective params for the currently selected image
   const activeParams = selectedImage
     ? (imageParamsMap.get(selectedImage.id) ?? globalParams)
     : globalParams;
   const isCustom = selectedImage ? imageParamsMap.has(selectedImage.id) : false;
 
-  // Get effective params for any image by id
   const getParamsForImage = useCallback(
-    (imgId: string) => imageParamsMap.get(imgId) ?? globalParams,
-    [imageParamsMap, globalParams]
+    (imgId: string) => imageParamsMapRef.current.get(imgId) ?? globalParamsRef.current,
+    []
   );
+
+  // Derive results from images + manual cells for CSV/table
+  const allResults = useMemo(() => {
+    return images
+      .filter((img) => img.result)
+      .map((img) => {
+        const manual = manualCells.get(img.id) || [];
+        const manualGreen = manual.filter((c) => c.type === "green").length;
+        const manualRed = manual.filter((c) => c.type === "red").length;
+        const base = img.result!;
+        const green = base.green + manualGreen;
+        const red = base.red + manualRed;
+        const total = green + red;
+        return {
+          ...base,
+          green,
+          red,
+          total,
+          viabilityPct: total > 0 ? (green / total) * 100 : 0,
+        };
+      });
+  }, [images, manualCells]);
 
   // ── Param changes ────────────────────────────────────────────────
   const handleParamsChange = useCallback(
@@ -64,7 +85,6 @@ function App() {
         setGlobalParams(newParams);
         return;
       }
-      // Store as per-image override
       setImageParamsMap((prev) => {
         const next = new Map(prev);
         next.set(selectedImage.id, newParams);
@@ -75,9 +95,7 @@ function App() {
   );
 
   const handleApplyToAll = useCallback(() => {
-    // Set current active params as new global baseline
     setGlobalParams({ ...activeParams });
-    // Clear all per-image overrides so all images use the new global
     setImageParamsMap(new Map());
   }, [activeParams]);
 
@@ -90,32 +108,64 @@ function App() {
     });
   }, [selectedImage]);
 
-  // ── Auto-normalize queue ──────────────────────────────────────────
+  // ── Auto normalize + analyze queue ─────────────────────────────
   const processNormalizeQueue = useCallback(async () => {
     if (normalizingRef.current || !ready) return;
     normalizingRef.current = true;
 
+    const total = normalizeQueueRef.current.length;
+    let processed = 0;
+
     while (normalizeQueueRef.current.length > 0) {
       const img = normalizeQueueRef.current.shift()!;
+      processed++;
+      setAnalysisProgress({ current: processed, total });
+
       try {
         setImages((prev) =>
           prev.map((i) => (i.id === img.id ? { ...i, normalizing: true } : i))
         );
-        const url = await normalizeImage(img.file);
+
+        const params = getParamsForImage(img.id);
+        const res = await cacheAndPreview(img.file, params);
+
+        const result: CellCountResult = {
+          imageName: img.name,
+          green: res.green,
+          red: res.red,
+          total: res.total,
+          viabilityPct: res.viabilityPct,
+        };
+
         setImages((prev) =>
           prev.map((i) =>
-            i.id === img.id ? { ...i, normalizedUrl: url, normalizing: false } : i
+            i.id === img.id
+              ? { ...i, normalizedUrl: res.normalizedDataUrl, normalizing: false, result }
+              : i
           )
         );
       } catch (e) {
-        console.error(`Normalization failed for ${img.name}:`, e);
-        setImages((prev) =>
-          prev.map((i) => (i.id === img.id ? { ...i, normalizing: false } : i))
-        );
+        console.error(`Analysis failed for ${img.name}:`, e);
+        // Fallback: try normalize-only
+        try {
+          const url = await normalizeImage(img.file);
+          setImages((prev) =>
+            prev.map((i) =>
+              i.id === img.id ? { ...i, normalizedUrl: url, normalizing: false } : i
+            )
+          );
+        } catch {
+          setImages((prev) =>
+            prev.map((i) => (i.id === img.id ? { ...i, normalizing: false } : i))
+          );
+        }
       }
     }
+
+    cachedForImageRef.current = "";
     normalizingRef.current = false;
-  }, [ready, normalizeImage]);
+    setAnalysisProgress(null);
+  }, [ready, normalizeImage, cacheAndPreview, getParamsForImage]);
 
   useEffect(() => {
     if (ready && normalizeQueueRef.current.length > 0) {
@@ -135,11 +185,16 @@ function App() {
         setNormalizedUrl(res.normalizedDataUrl);
         setAnnotatedUrl(res.annotatedDataUrl);
         setImageNaturalSize({ width: 0, height: 0 });
-        setLiveResult({
+
+        const result: CellCountResult = {
           imageName: selectedImage.name,
           green: res.green, red: res.red,
           total: res.total, viabilityPct: res.viabilityPct,
-        });
+        };
+        setLiveResult(result);
+        setImages((prev) =>
+          prev.map((i) => (i.id === selectedImage.id ? { ...i, result } : i))
+        );
       } catch (e) {
         console.error("Cache+preview failed:", e);
       } finally {
@@ -152,20 +207,23 @@ function App() {
       const res = await fastReThreshold(p);
       if (res) {
         setAnnotatedUrl(res.annotatedDataUrl);
-        setLiveResult({
+        const result: CellCountResult = {
           imageName: selectedImage.name,
           green: res.green, red: res.red,
           total: res.total, viabilityPct: res.viabilityPct,
-        });
+        };
+        setLiveResult(result);
+        setImages((prev) =>
+          prev.map((i) => (i.id === selectedImage.id ? { ...i, result } : i))
+        );
       }
     } catch (e) {
       console.error("Fast re-threshold failed:", e);
     }
   }, [selectedImage, ready, cacheAndPreview, fastReThreshold]);
 
-  // Debounce threshold changes using the active params for the selected image
   useEffect(() => {
-    if (!selectedImage || !ready || processing) return;
+    if (!selectedImage || !ready || normalizingRef.current) return;
 
     if (debounceRef.current) clearTimeout(debounceRef.current);
     debounceRef.current = setTimeout(() => {
@@ -175,7 +233,7 @@ function App() {
     return () => {
       if (debounceRef.current) clearTimeout(debounceRef.current);
     };
-  }, [activeParams, selectedImage?.id, ready, processing, runFastPreview]);
+  }, [activeParams, selectedImage?.id, ready, runFastPreview]);
 
   // ── Image management ──────────────────────────────────────────────
   const handleImagesAdded = useCallback((files: File[]) => {
@@ -205,14 +263,10 @@ function App() {
       }
       return next;
     });
-    setResults((prev) => {
-      const removed = images.find((img) => img.id === id);
-      return removed ? prev.filter((r) => r.imageName !== removed.name) : prev;
-    });
     setManualCells((prev) => { const n = new Map(prev); n.delete(id); return n; });
     setImageParamsMap((prev) => { const n = new Map(prev); n.delete(id); return n; });
     normalizeQueueRef.current = normalizeQueueRef.current.filter((i) => i.id !== id);
-  }, [selectedId, images]);
+  }, [selectedId]);
 
   const handleImageSelect = useCallback((id: string) => {
     setSelectedId(id);
@@ -222,13 +276,8 @@ function App() {
     setNormalizedUrl(img.normalizedUrl);
     cachedForImageRef.current = "";
     setAnnotatedUrl(undefined);
-    setLiveResult(undefined);
-
-    const existingResult = results.find((r) => r.imageName === img.name);
-    if (existingResult?.annotatedImageData) {
-      setAnnotatedUrl(existingResult.annotatedImageData);
-    }
-  }, [images, results]);
+    setLiveResult(img.result || undefined);
+  }, [images]);
 
   useEffect(() => {
     if (selectedId) {
@@ -262,52 +311,16 @@ function App() {
     });
   }, [selectedImage]);
 
-  // ── Batch processing (uses per-image params) ──────────────────────
-  const handleProcessAll = useCallback(async () => {
-    if (images.length === 0 || !ready) return;
-    setResults([]);
-    setAnnotatedUrl(undefined);
-    const files = images.map((img) => img.file);
-    const paramsPerFile = images.map((img) => getParamsForImage(img.id));
-
-    setImages((prev) => prev.map((img) => ({ ...img, processing: true, result: undefined })));
-
-    await processBatch(files, paramsPerFile, (result, index) => {
-      const img = images[index];
-      const manual = manualCells.get(img.id) || [];
-      const manualGreen = manual.filter((c) => c.type === "green").length;
-      const manualRed = manual.filter((c) => c.type === "red").length;
-      const merged: CellCountResult = {
-        ...result,
-        green: result.green + manualGreen,
-        red: result.red + manualRed,
-        total: result.total + manualGreen + manualRed,
-        viabilityPct: 0,
-      };
-      merged.viabilityPct = merged.total > 0 ? (merged.green / merged.total) * 100 : 0;
-
-      setResults((prev) => [...prev, merged]);
-      setImages((prev) =>
-        prev.map((img, i) =>
-          i === index ? { ...img, processing: false, result: merged } : img
-        )
-      );
-    });
-
-    setImages((prev) => prev.map((img) => ({ ...img, processing: false })));
-  }, [images, ready, getParamsForImage, processBatch, manualCells]);
-
   const handleExportCSV = useCallback(() => {
-    if (results.length === 0) return;
-    downloadCSV(results);
-  }, [results]);
+    if (allResults.length === 0) return;
+    downloadCSV(allResults);
+  }, [allResults]);
 
   const handleClearAll = useCallback(() => {
     images.forEach((img) => URL.revokeObjectURL(img.previewUrl));
     normalizeQueueRef.current = [];
     cachedForImageRef.current = "";
     setImages([]);
-    setResults([]);
     setSelectedId(undefined);
     setAnnotatedUrl(undefined);
     setNormalizedUrl(undefined);
@@ -315,10 +328,12 @@ function App() {
     setManualCells(new Map());
     setImageParamsMap(new Map());
     setClickMode("off");
+    setAnalysisProgress(null);
   }, [images]);
 
   const displayResult = liveResult || selectedImage?.result;
   const customCount = imageParamsMap.size;
+  const analyzedCount = images.filter((i) => i.result).length;
 
   return (
     <div className="min-h-screen bg-background">
@@ -343,23 +358,30 @@ function App() {
                 Loading OpenCV...
               </div>
             )}
+            {analysisProgress && (
+              <div className="flex items-center gap-2 text-sm text-muted-foreground mr-2">
+                <Loader2 className="h-4 w-4 animate-spin" />
+                Analyzing {analysisProgress.current}/{analysisProgress.total}...
+              </div>
+            )}
             {error && <span className="text-sm text-danger mr-2">{error}</span>}
             {customCount > 0 && (
               <span className="text-[11px] text-muted-foreground mr-1">
                 {customCount} custom
               </span>
             )}
+            {images.length > 0 && !analysisProgress && analyzedCount > 0 && (
+              <span className="text-[11px] text-muted-foreground mr-1">
+                {analyzedCount}/{images.length} analyzed
+              </span>
+            )}
             {images.length > 0 && (
-              <Button variant="ghost" size="sm" onClick={handleClearAll} disabled={processing}>
+              <Button variant="ghost" size="sm" onClick={handleClearAll} disabled={!!analysisProgress}>
                 <Trash2 className="h-4 w-4 mr-1" />
                 Clear All
               </Button>
             )}
-            <Button size="sm" onClick={handleProcessAll} disabled={!ready || images.length === 0 || processing}>
-              {processing ? <Loader2 className="h-4 w-4 animate-spin mr-1" /> : <Play className="h-4 w-4 mr-1" />}
-              Process All
-            </Button>
-            <Button variant="outline" size="sm" onClick={handleExportCSV} disabled={results.length === 0}>
+            <Button variant="outline" size="sm" onClick={handleExportCSV} disabled={allResults.length === 0}>
               <Download className="h-4 w-4 mr-1" />
               Export CSV
             </Button>
@@ -378,8 +400,6 @@ function App() {
               selectedId={selectedId}
               customParamsIds={new Set(imageParamsMap.keys())}
             />
-
-            {progress && <ProgressBar progress={progress} />}
 
             {selectedImage && annotatedUrl && (
               <div className="flex items-center gap-2 p-2 rounded-lg border border-border bg-card">
@@ -434,7 +454,7 @@ function App() {
               imageNaturalSize={imageNaturalSize}
             />
 
-            {results.length > 0 && <ResultsTable results={results} />}
+            {allResults.length > 0 && <ResultsTable results={allResults} />}
           </div>
 
           <div className="col-span-4">
