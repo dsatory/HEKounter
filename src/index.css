@@ -20,7 +20,7 @@
   --color-border: oklch(0.3 0 0);
   --color-input: oklch(0.3 0 0);
   --color-ring: oklch(0.72 0.15 230);
-  --color-success: oklch(0.72 0.15 230);
+  --color-success: oklch(0.75 0.18 150);
   --color-danger: oklch(0.65 0.2 25);
 
   --radius-lg: 0.75rem;
