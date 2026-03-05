@@ -15,21 +15,6 @@ interface ImagePreviewProps {
   imageNaturalSize?: { width: number; height: number };
 }
 
-function getRenderedImageRect(img: HTMLImageElement) {
-  const natW = img.naturalWidth;
-  const natH = img.naturalHeight;
-  const elemW = img.clientWidth;
-  const elemH = img.clientHeight;
-
-  const scale = Math.min(elemW / natW, elemH / natH);
-  const renderedW = natW * scale;
-  const renderedH = natH * scale;
-  const offsetX = (elemW - renderedW) / 2;
-  const offsetY = (elemH - renderedH) / 2;
-
-  return { offsetX, offsetY, renderedW, renderedH, natW, natH };
-}
-
 export function ImagePreview({
   originalUrl,
   normalizedUrl,
@@ -42,25 +27,27 @@ export function ImagePreview({
   onManualCellAdd,
   imageNaturalSize,
 }: ImagePreviewProps) {
+  const svgRef = useRef<SVGSVGElement>(null);
   const imgRef = useRef<HTMLImageElement>(null);
 
-  const handleImageClick = useCallback(
-    (e: React.MouseEvent<HTMLImageElement>) => {
-      if (clickMode === "off" || !onManualCellAdd || !imgRef.current) return;
+  const handleSvgClick = useCallback(
+    (e: React.MouseEvent<SVGSVGElement>) => {
+      if (clickMode === "off" || !onManualCellAdd || !svgRef.current) return;
 
-      const img = imgRef.current;
-      const rect = img.getBoundingClientRect();
-      const { offsetX, offsetY, renderedW, renderedH } = getRenderedImageRect(img);
-      const natW = imageNaturalSize?.width || img.naturalWidth;
-      const natH = imageNaturalSize?.height || img.naturalHeight;
+      const svg = svgRef.current;
+      const pt = svg.createSVGPoint();
+      pt.x = e.clientX;
+      pt.y = e.clientY;
+      const ctm = svg.getScreenCTM();
+      if (!ctm) return;
+      const svgPt = pt.matrixTransform(ctm.inverse());
 
-      const clickX = e.clientX - rect.left - offsetX;
-      const clickY = e.clientY - rect.top - offsetY;
+      const x = Math.round(svgPt.x);
+      const y = Math.round(svgPt.y);
 
-      if (clickX < 0 || clickY < 0 || clickX > renderedW || clickY > renderedH) return;
-
-      const x = Math.round((clickX / renderedW) * natW);
-      const y = Math.round((clickY / renderedH) * natH);
+      const natW = imageNaturalSize?.width || imgRef.current?.naturalWidth || 1;
+      const natH = imageNaturalSize?.height || imgRef.current?.naturalHeight || 1;
+      if (x < 0 || y < 0 || x > natW || y > natH) return;
 
       onManualCellAdd({ x, y, type: clickMode });
     },
@@ -148,57 +135,47 @@ export function ImagePreview({
         </TabsContent>
 
         <TabsContent value="annotated" className="mt-0">
-          <div className="p-2 relative">
+          <div className="p-2">
             {annotatedUrl ? (
-              <div className="relative inline-block w-full">
+              <div className="relative">
                 <img
                   ref={imgRef}
                   src={annotatedUrl}
                   alt="Annotated"
-                  className={`w-full h-auto rounded max-h-[500px] object-contain bg-black ${cursorClass}`}
-                  onClick={handleImageClick}
+                  className="w-full h-auto rounded max-h-[500px] object-contain bg-black"
                 />
-                {manualCells.length > 0 && imgRef.current && (() => {
-                  const { offsetX, offsetY, renderedW, renderedH, natW, natH } = getRenderedImageRect(imgRef.current);
-                  return (
-                  <svg
-                    className="absolute pointer-events-none"
-                    style={{
-                      left: offsetX,
-                      top: offsetY,
-                      width: renderedW,
-                      height: renderedH,
-                    }}
-                    viewBox={`0 0 ${imageNaturalSize?.width || natW} ${imageNaturalSize?.height || natH}`}
-                    preserveAspectRatio="xMidYMid meet"
-                  >
-                    {manualCells.map((cell, idx) => (
-                      <g key={idx}>
-                        <circle
-                          cx={cell.x}
-                          cy={cell.y}
-                          r={12}
-                          fill="none"
-                          stroke={cell.type === "green" ? "#00ff00" : "#ff0000"}
-                          strokeWidth={3}
-                        />
-                        <line
-                          x1={cell.x - 6} y1={cell.y}
-                          x2={cell.x + 6} y2={cell.y}
-                          stroke={cell.type === "green" ? "#00ff00" : "#ff0000"}
-                          strokeWidth={2}
-                        />
-                        <line
-                          x1={cell.x} y1={cell.y - 6}
-                          x2={cell.x} y2={cell.y + 6}
-                          stroke={cell.type === "green" ? "#00ff00" : "#ff0000"}
-                          strokeWidth={2}
-                        />
-                      </g>
-                    ))}
-                  </svg>
-                  );
-                })()}
+                <svg
+                  ref={svgRef}
+                  className={`absolute inset-0 w-full h-full ${cursorClass}`}
+                  viewBox={`0 0 ${imageNaturalSize?.width || imgRef.current?.naturalWidth || 100} ${imageNaturalSize?.height || imgRef.current?.naturalHeight || 100}`}
+                  preserveAspectRatio="xMidYMid meet"
+                  onClick={handleSvgClick}
+                >
+                  {manualCells.map((cell, idx) => (
+                    <g key={idx}>
+                      <circle
+                        cx={cell.x}
+                        cy={cell.y}
+                        r={12}
+                        fill="none"
+                        stroke={cell.type === "green" ? "#00ff00" : "#ff0000"}
+                        strokeWidth={3}
+                      />
+                      <line
+                        x1={cell.x - 6} y1={cell.y}
+                        x2={cell.x + 6} y2={cell.y}
+                        stroke={cell.type === "green" ? "#00ff00" : "#ff0000"}
+                        strokeWidth={2}
+                      />
+                      <line
+                        x1={cell.x} y1={cell.y - 6}
+                        x2={cell.x} y2={cell.y + 6}
+                        stroke={cell.type === "green" ? "#00ff00" : "#ff0000"}
+                        strokeWidth={2}
+                      />
+                    </g>
+                  ))}
+                </svg>
               </div>
             ) : (
               <div className="flex items-center justify-center h-[300px] text-muted-foreground text-sm">
