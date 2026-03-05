@@ -7,8 +7,8 @@
   --color-card-foreground: oklch(0.985 0 0);
   --color-popover: oklch(0.17 0 0);
   --color-popover-foreground: oklch(0.985 0 0);
-  --color-primary: oklch(0.75 0.18 150);
-  --color-primary-foreground: oklch(0.15 0.05 150);
+  --color-primary: oklch(0.72 0.15 230);
+  --color-primary-foreground: oklch(0.98 0.01 230);
   --color-secondary: oklch(0.25 0 0);
   --color-secondary-foreground: oklch(0.985 0 0);
   --color-muted: oklch(0.22 0 0);
@@ -19,8 +19,8 @@
   --color-destructive-foreground: oklch(0.985 0 0);
   --color-border: oklch(0.3 0 0);
   --color-input: oklch(0.3 0 0);
-  --color-ring: oklch(0.75 0.18 150);
-  --color-success: oklch(0.75 0.18 150);
+  --color-ring: oklch(0.72 0.15 230);
+  --color-success: oklch(0.72 0.15 230);
   --color-danger: oklch(0.65 0.2 25);
 
   --radius-lg: 0.75rem;
