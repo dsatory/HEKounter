@@ -14,7 +14,15 @@ A browser-based fluorescence microscopy cell viability counter. Counts live (gre
 - **CSV export** -- download results as `image_name, green, red, total, viability_pct`
 - **Runs entirely in the browser** -- no server, no uploads. OpenCV.js (WebAssembly) runs in a Web Worker for responsive UI.
 
+## Live Demo
+
+**[https://dsatory.github.io/HEKounter/](https://dsatory.github.io/HEKounter/)**
+
 ## Quick Start
+
+**Option A -- double-click:** Open `start.command` in Finder. It installs dependencies (first time) and launches the app in your browser.
+
+**Option B -- terminal:**
 
 ```bash
 npm install

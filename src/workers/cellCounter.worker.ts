@@ -7,7 +7,6 @@ let cvReady = false;
 let cvReadyPromise: Promise<void>;
 
 // Cached data for real-time threshold preview
-let cachedImageName = "";
 let cachedNormalized: any = null; // cv.Mat RGB
 let cachedWidth = 0;
 let cachedHeight = 0;
@@ -23,7 +22,7 @@ function loadOpenCV(): Promise<void> {
         resolve();
       },
     };
-    fetch("/opencv.js")
+    fetch(`${import.meta.env.BASE_URL}opencv.js`)
       .then((res) => {
         if (!res.ok) throw new Error(`HTTP ${res.status}`);
         return res.text();
@@ -345,7 +344,7 @@ const workerApi = {
     const normalized = subtractBackground(cv, rgb);
 
     cachedNormalized = normalized;
-    cachedImageName = imageName;
+    void imageName;
     cachedWidth = normalized.cols;
     cachedHeight = normalized.rows;
 
