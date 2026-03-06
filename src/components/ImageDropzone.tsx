@@ -90,7 +90,7 @@ export function ImageDropzone({
       </div>
 
       {images.length > 0 && (
-        <div className="grid grid-cols-8 grid-rows-2 gap-2 overflow-x-auto pr-1">
+        <div className="grid grid-cols-8 gap-2 max-h-80 overflow-y-auto pr-1">
           {images.map((img) => (
             <div
               key={img.id}
