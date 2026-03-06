@@ -17,9 +17,22 @@ function bufferToDataUrl(buffer: ArrayBuffer, width: number, height: number): st
   return canvas.toDataURL("image/jpeg", 0.9);
 }
 
-function isTiff(file: File): boolean {
+export function isTiff(file: File): boolean {
   const name = file.name.toLowerCase();
   return name.endsWith(".tif") || name.endsWith(".tiff") || file.type === "image/tiff";
+}
+
+export function tiffToDataUrl(buffer: ArrayBuffer, quality = 0.7): string {
+  const ifds = UTIF.decode(buffer);
+  if (ifds.length === 0) throw new Error("Empty TIFF file");
+  UTIF.decodeImage(buffer, ifds[0]);
+  const rgba = UTIF.toRGBA8(ifds[0]);
+  const canvas = document.createElement("canvas");
+  canvas.width = ifds[0].width;
+  canvas.height = ifds[0].height;
+  const ctx = canvas.getContext("2d")!;
+  ctx.putImageData(new ImageData(new Uint8ClampedArray(rgba), ifds[0].width, ifds[0].height), 0, 0);
+  return canvas.toDataURL("image/jpeg", quality);
 }
 
 function decodeTiff(buffer: ArrayBuffer): ImageData {
@@ -59,6 +72,8 @@ function createWorker() {
 export interface FastPreviewResult {
   annotatedDataUrl: string;
   normalizedDataUrl: string;
+  width: number;
+  height: number;
   green: number;
   red: number;
   total: number;
@@ -150,13 +165,6 @@ export function useImageProcessor() {
     return ctx.getImageData(0, 0, width, height);
   }, []);
 
-  const normalizeImage = useCallback(async (file: File): Promise<string> => {
-    if (!apiRef.current || !ready) throw new Error("OpenCV not ready");
-    const imageData = await loadImageData(file);
-    const { buffer, width, height } = await apiRef.current.normalizeImage(imageData);
-    return bufferToDataUrl(buffer, width, height);
-  }, [ready, loadImageData]);
-
   const cacheAndPreview = useCallback(async (
     file: File,
     params: ProcessingParams
@@ -173,6 +181,8 @@ export function useImageProcessor() {
     return {
       normalizedDataUrl,
       annotatedDataUrl: bufferToDataUrl(result.annotatedBuffer, result.width, result.height),
+      width: result.width,
+      height: result.height,
       green: result.green,
       red: result.red,
       total: result.total,
@@ -194,6 +204,8 @@ export function useImageProcessor() {
     return {
       normalizedDataUrl: "",
       annotatedDataUrl: bufferToDataUrl(result.annotatedBuffer, result.width, result.height),
+      width: result.width,
+      height: result.height,
       green: result.green,
       red: result.red,
       total: result.total,
@@ -216,6 +228,6 @@ export function useImageProcessor() {
 
   return {
     ready, loading, error,
-    normalizeImage, cacheAndPreview, fastReThreshold, clearCache, restartWorker,
+    cacheAndPreview, fastReThreshold, clearCache, restartWorker,
   };
 }

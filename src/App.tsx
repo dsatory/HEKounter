@@ -1,12 +1,11 @@
-import { useState, useCallback, useEffect, useRef, useMemo } from "react";
+import { useState, useCallback, useEffect, useRef } from "react";
 import { Microscope, Download, Loader2, Trash2, MousePointer, Undo2, RefreshCw, AlertTriangle } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { ImageDropzone } from "@/components/ImageDropzone";
 import { ProcessingControls } from "@/components/ProcessingControls";
 import { ImagePreview } from "@/components/ImagePreview";
 import { ResultsTable } from "@/components/ResultsTable";
-import { useImageProcessor } from "@/hooks/useImageProcessor";
-import UTIF from "utif2";
+import { useImageProcessor, isTiff, tiffToDataUrl } from "@/hooks/useImageProcessor";
 import { downloadCSV } from "@/lib/csvExport";
 import { DEFAULT_PARAMS } from "@/lib/types";
 import { cn } from "@/lib/utils";
@@ -59,8 +58,7 @@ function App() {
     []
   );
 
-  // Derive results from images + manual cells
-  const allResults = useMemo(() => {
+  const buildExportResults = useCallback((): CellCountResult[] => {
     return images
       .filter((img) => img.result)
       .map((img) => {
@@ -201,7 +199,7 @@ function App() {
         cachedForImageRef.current = selectedImage.name;
         setNormalizedUrl(res.normalizedDataUrl);
         setAnnotatedUrl(res.annotatedDataUrl);
-        setImageNaturalSize({ width: 0, height: 0 });
+        setImageNaturalSize({ width: res.width, height: res.height });
 
         const result: CellCountResult = {
           imageName: selectedImage.name,
@@ -262,22 +260,10 @@ function App() {
   const handleImagesAdded = useCallback(async (files: File[]) => {
     const newImages: LoadedImage[] = [];
     for (const f of files) {
-      const ext = f.name.toLowerCase();
-      const isTiff = ext.endsWith(".tif") || ext.endsWith(".tiff") || f.type === "image/tiff";
       let previewUrl: string;
-
-      if (isTiff) {
+      if (isTiff(f)) {
         try {
-          const buf = await f.arrayBuffer();
-          const ifds = UTIF.decode(buf);
-          UTIF.decodeImage(buf, ifds[0]);
-          const rgba = UTIF.toRGBA8(ifds[0]);
-          const canvas = document.createElement("canvas");
-          canvas.width = ifds[0].width;
-          canvas.height = ifds[0].height;
-          const ctx = canvas.getContext("2d")!;
-          ctx.putImageData(new ImageData(new Uint8ClampedArray(rgba), ifds[0].width, ifds[0].height), 0, 0);
-          previewUrl = canvas.toDataURL("image/jpeg", 0.7);
+          previewUrl = tiffToDataUrl(await f.arrayBuffer());
         } catch {
           previewUrl = "";
         }
@@ -303,6 +289,8 @@ function App() {
 
   const handleImageRemove = useCallback((id: string) => {
     setImages((prev) => {
+      const removed = prev.find((img) => img.id === id);
+      if (removed?.previewUrl) URL.revokeObjectURL(removed.previewUrl);
       const next = prev.filter((img) => img.id !== id);
       if (selectedId === id) {
         setSelectedId(next.length > 0 ? next[0].id : undefined);
@@ -396,9 +384,10 @@ function App() {
   }, [images, batchRunning, ready, restartWorker, processAnalyzeQueue]);
 
   const handleExportCSV = useCallback(() => {
-    if (allResults.length === 0) return;
-    downloadCSV(allResults);
-  }, [allResults]);
+    const results = buildExportResults();
+    if (results.length === 0) return;
+    downloadCSV(results);
+  }, [buildExportResults]);
 
   const handleClearAll = useCallback(() => {
     images.forEach((img) => URL.revokeObjectURL(img.previewUrl));
@@ -478,7 +467,7 @@ function App() {
                 Clear All
               </Button>
             )}
-            <Button variant="outline" size="sm" onClick={handleExportCSV} disabled={allResults.length === 0}>
+            <Button variant="outline" size="sm" onClick={handleExportCSV} disabled={doneCount === 0}>
               <Download className="h-4 w-4 mr-1" />
               Export CSV
             </Button>

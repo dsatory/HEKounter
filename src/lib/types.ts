@@ -11,7 +11,7 @@ export const DEFAULT_PARAMS: ProcessingParams = {
   claheClipLimit: 3.0,
   blurKernelSize: 5,
   minCellArea: 30,
-  maxCellArea: 5000,
+  maxCellArea: 2000,
   greenThreshold: 40,
   redThreshold: 40,
 };
@@ -23,7 +23,6 @@ export interface CellCountResult {
   total: number;
   viabilityPct: number;
   confidence: number;
-  annotatedImageData?: string;
 }
 
 export interface ManualCell {
@@ -44,10 +43,4 @@ export interface LoadedImage {
   analysisStatus: AnalysisStatus;
   result?: CellCountResult;
   failureReason?: string;
-}
-
-export interface ProcessingProgress {
-  current: number;
-  total: number;
-  currentName: string;
 }

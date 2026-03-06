@@ -188,9 +188,9 @@ export function ProcessingControls({
             <ParamSlider
               label="Max Cell Area (px)"
               value={params.maxCellArea}
-              min={500}
-              max={20000}
-              step={100}
+              min={100}
+              max={2000}
+              step={50}
               onChange={(v) => update("maxCellArea", v)}
             />
           </div>
