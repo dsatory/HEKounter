@@ -11,9 +11,8 @@ import { DEFAULT_PARAMS } from "@/lib/types";
 import { cn } from "@/lib/utils";
 import type { LoadedImage, ProcessingParams, CellCountResult, ManualCell } from "@/lib/types";
 
-let idCounter = 0;
-
 function App() {
+  const idCounterRef = useRef(0);
   const [images, setImages] = useState<LoadedImage[]>([]);
   const [selectedId, setSelectedId] = useState<string | undefined>();
 
@@ -138,6 +137,7 @@ function App() {
           total: res.total,
           viabilityPct: res.viabilityPct,
           confidence: res.confidence,
+          nlrData: res.nlrData,
         };
 
         setImages((prev) =>
@@ -206,6 +206,7 @@ function App() {
           green: res.green, red: res.red,
           total: res.total, viabilityPct: res.viabilityPct,
           confidence: res.confidence,
+          nlrData: res.nlrData,
         };
         setLiveResult(result);
         setImages((prev) =>
@@ -230,6 +231,7 @@ function App() {
           green: res.green, red: res.red,
           total: res.total, viabilityPct: res.viabilityPct,
           confidence: res.confidence,
+          nlrData: res.nlrData,
         };
         setLiveResult(result);
         setImages((prev) =>
@@ -272,7 +274,7 @@ function App() {
       }
 
       newImages.push({
-        id: `img-${++idCounter}`,
+        id: `img-${++idCounterRef.current}`,
         file: f,
         name: f.name,
         previewUrl,
@@ -495,6 +497,7 @@ function App() {
           onImageSelect={handleImageSelect}
           selectedId={selectedId}
           customParamsIds={new Set(imageParamsMap.keys())}
+          manualCells={manualCells}
         />
 
         <div id="image-preview-section" className="grid grid-cols-12 gap-6">

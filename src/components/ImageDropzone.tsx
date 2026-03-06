@@ -1,7 +1,7 @@
 import { useCallback, useRef, useState } from "react";
 import { Upload, ImagePlus, X } from "lucide-react";
 import { cn } from "@/lib/utils";
-import type { LoadedImage } from "@/lib/types";
+import type { LoadedImage, ManualCell } from "@/lib/types";
 
 interface ImageDropzoneProps {
   images: LoadedImage[];
@@ -10,6 +10,7 @@ interface ImageDropzoneProps {
   onImageSelect: (id: string) => void;
   selectedId?: string;
   customParamsIds?: Set<string>;
+  manualCells?: Map<string, ManualCell[]>;
 }
 
 export function ImageDropzone({
@@ -19,6 +20,7 @@ export function ImageDropzone({
   onImageSelect,
   selectedId,
   customParamsIds,
+  manualCells,
 }: ImageDropzoneProps) {
   const [dragOver, setDragOver] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
@@ -119,12 +121,17 @@ export function ImageDropzone({
                   <span className="text-[10px] text-danger font-medium">Failed</span>
                 </div>
               )}
-              {img.result && (
-                <div className="absolute bottom-0 left-0 right-0 bg-background/80 px-1 py-0.5 text-[10px] font-mono flex justify-between">
-                  <span className="text-success">{img.result.green}</span>
-                  <span className="text-danger">{img.result.red}</span>
-                </div>
-              )}
+              {img.result && (() => {
+                const manual = manualCells?.get(img.id) || [];
+                const g = img.result.green + manual.filter((c) => c.type === "green").length;
+                const r = img.result.red + manual.filter((c) => c.type === "red").length;
+                return (
+                  <div className="absolute bottom-0 left-0 right-0 bg-background/80 px-1 py-0.5 text-[10px] font-mono flex justify-between">
+                    <span className="text-success">{g}</span>
+                    <span className="text-danger">{r}</span>
+                  </div>
+                );
+              })()}
               {customParamsIds?.has(img.id) && (
                 <div className="absolute top-0.5 left-0.5 h-4 w-4 bg-primary rounded-full flex items-center justify-center" title="Custom thresholds">
                   <span className="text-[8px] font-bold text-primary-foreground">C</span>

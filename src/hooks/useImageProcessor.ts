@@ -2,7 +2,7 @@ import { useRef, useState, useCallback, useEffect } from "react";
 import * as Comlink from "comlink";
 import UTIF from "utif2";
 import type { WorkerApi } from "../workers/cellCounter.worker";
-import type { ProcessingParams } from "../lib/types";
+import type { ProcessingParams, NLRData } from "../lib/types";
 
 const MAX_DIM = 2048;
 
@@ -81,6 +81,7 @@ export interface FastPreviewResult {
   confidence: number;
   greenCells: Array<{ x: number; y: number; area: number }>;
   redCells: Array<{ x: number; y: number; area: number }>;
+  nlrData?: NLRData;
 }
 
 export function useImageProcessor() {
@@ -149,16 +150,20 @@ export function useImageProcessor() {
       canvas.height = imgData.height;
       ctx.putImageData(imgData, 0, 0);
     } else {
-      const img = await new Promise<HTMLImageElement>((resolve, reject) => {
-        const el = new Image();
-        el.onload = () => resolve(el);
-        el.onerror = () => reject(new Error(`Failed to load: ${file.name}`));
-        el.src = URL.createObjectURL(file);
-      });
-      canvas.width = img.width;
-      canvas.height = img.height;
-      ctx.drawImage(img, 0, 0);
-      URL.revokeObjectURL(img.src);
+      const objectUrl = URL.createObjectURL(file);
+      try {
+        const img = await new Promise<HTMLImageElement>((resolve, reject) => {
+          const el = new Image();
+          el.onload = () => resolve(el);
+          el.onerror = () => reject(new Error(`Failed to load: ${file.name}`));
+          el.src = objectUrl;
+        });
+        canvas.width = img.width;
+        canvas.height = img.height;
+        ctx.drawImage(img, 0, 0);
+      } finally {
+        URL.revokeObjectURL(objectUrl);
+      }
     }
 
     const { width, height } = scaleDown(canvas, ctx, canvas.width, canvas.height);
@@ -190,6 +195,7 @@ export function useImageProcessor() {
       confidence: result.confidence,
       greenCells: result.greenCells,
       redCells: result.redCells,
+      nlrData: result.nlrData,
     };
   }, [ready, loadImageData]);
 
@@ -213,6 +219,7 @@ export function useImageProcessor() {
       confidence: result.confidence,
       greenCells: result.greenCells,
       redCells: result.redCells,
+      nlrData: result.nlrData,
     };
   }, [ready]);
 

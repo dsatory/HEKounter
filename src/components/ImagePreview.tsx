@@ -169,9 +169,10 @@ export function ImagePreview({
                 <svg
                   ref={svgRef}
                   className={`absolute inset-0 w-full h-full ${cursorClass}`}
-                  viewBox={`0 0 ${imageNaturalSize?.width || imgRef.current?.naturalWidth || 100} ${imageNaturalSize?.height || imgRef.current?.naturalHeight || 100}`}
+                  viewBox={imageNaturalSize ? `0 0 ${imageNaturalSize.width} ${imageNaturalSize.height}` : undefined}
                   preserveAspectRatio="xMidYMid meet"
                   onClick={handleSvgClick}
+                  style={imageNaturalSize ? undefined : { pointerEvents: "none" }}
                 >
                   {manualCells.map((cell, idx) => (
                     <g key={idx}>

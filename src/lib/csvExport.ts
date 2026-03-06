@@ -1,12 +1,49 @@
 import type { CellCountResult } from "./types";
 
+function csvField(value: string | number): string {
+  const str = String(value);
+  if (str.includes(",") || str.includes('"') || str.includes("\n")) {
+    return `"${str.replace(/"/g, '""')}"`;
+  }
+  return str;
+}
+
 export function generateCSV(results: CellCountResult[]): string {
-  const header = "image_name,green,red,total,viability_pct,confidence_pct";
-  const rows = results.map(
-    (r) =>
-      `${r.imageName},${r.green},${r.red},${r.total},${r.viabilityPct.toFixed(1)},${r.confidence}`
-  );
-  return [header, ...rows].join("\n");
+  const hasNlr = results.some((r) => r.nlrData);
+
+  if (!hasNlr) {
+    const header = "image_name,green,red,total,viability_pct,confidence_pct";
+    const rows = results.map(
+      (r) =>
+        `${csvField(r.imageName)},${r.green},${r.red},${r.total},${r.viabilityPct.toFixed(1)},${r.confidence}`
+    );
+    return [header, ...rows].join("\n");
+  }
+
+  const sections: string[] = [];
+
+  const summaryHeader = "image_name,nlr_count,avg_green,avg_red,avg_total,avg_viability_pct,std_viability_pct,confidence_pct";
+  const summaryRows = results.map((r) => {
+    const d = r.nlrData;
+    if (d) {
+      return `${csvField(r.imageName)},${d.nlrCount},${d.avgGreen.toFixed(1)},${d.avgRed.toFixed(1)},${d.avgTotal.toFixed(1)},${d.avgViabilityPct.toFixed(1)},${d.stdViabilityPct.toFixed(1)},${r.confidence}`;
+    }
+    return `${csvField(r.imageName)},0,${r.green},${r.red},${r.total},${r.viabilityPct.toFixed(1)},0.0,${r.confidence}`;
+  });
+  sections.push([summaryHeader, ...summaryRows].join("\n"));
+
+  const nlrResults = results.filter((r) => r.nlrData && r.nlrData.nlrs.length > 0);
+  if (nlrResults.length > 0) {
+    const detailHeader = "\nimage_name,nlr_id,green,red,total,viability_pct,integrity_pct";
+    const detailRows = nlrResults.flatMap((r) =>
+      r.nlrData!.nlrs.map(
+        (n) => `${csvField(r.imageName)},${n.id},${n.green},${n.red},${n.total},${n.viabilityPct.toFixed(1)},${n.integrity}`
+      )
+    );
+    sections.push([detailHeader, ...detailRows].join("\n"));
+  }
+
+  return sections.join("\n");
 }
 
 function commonPrefix(names: string[]): string {
