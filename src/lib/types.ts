@@ -5,6 +5,12 @@ export interface ProcessingParams {
   maxCellArea: number;
   greenThreshold: number;
   redThreshold: number;
+  nlrMode: boolean;
+  nlrMinRadius: number;
+  nlrMaxRadius: number;
+  nlrEdgeMargin: number;
+  nlrIntegrity: number;
+  nlrSensitivity: number;
 }
 
 export const DEFAULT_PARAMS: ProcessingParams = {
@@ -14,7 +20,35 @@ export const DEFAULT_PARAMS: ProcessingParams = {
   maxCellArea: 2000,
   greenThreshold: 40,
   redThreshold: 40,
+  nlrMode: false,
+  nlrMinRadius: 50,
+  nlrMaxRadius: 200,
+  nlrEdgeMargin: 10,
+  nlrIntegrity: 30,
+  nlrSensitivity: 15,
 };
+
+export interface NLRResult {
+  id: number;
+  cx: number;
+  cy: number;
+  radius: number;
+  integrity: number;
+  green: number;
+  red: number;
+  total: number;
+  viabilityPct: number;
+}
+
+export interface NLRData {
+  nlrCount: number;
+  nlrs: NLRResult[];
+  avgGreen: number;
+  avgRed: number;
+  avgTotal: number;
+  avgViabilityPct: number;
+  stdViabilityPct: number;
+}
 
 export interface CellCountResult {
   imageName: string;
@@ -23,6 +57,7 @@ export interface CellCountResult {
   total: number;
   viabilityPct: number;
   confidence: number;
+  nlrData?: NLRData;
 }
 
 export interface ManualCell {

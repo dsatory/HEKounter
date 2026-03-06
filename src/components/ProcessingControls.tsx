@@ -2,7 +2,7 @@ import { useState } from "react";
 import { Slider } from "@/components/ui/slider";
 import type { ProcessingParams } from "@/lib/types";
 import { DEFAULT_PARAMS } from "@/lib/types";
-import { RotateCcw, ChevronDown, ChevronRight, Copy, Globe } from "lucide-react";
+import { RotateCcw, ChevronDown, ChevronRight, Copy, Globe, CircleDot } from "lucide-react";
 import { Button } from "@/components/ui/button";
 
 interface ProcessingControlsProps {
@@ -64,7 +64,7 @@ export function ProcessingControls({
 }: ProcessingControlsProps) {
   const [showAdvanced, setShowAdvanced] = useState(false);
 
-  const update = (key: keyof ProcessingParams, value: number) => {
+  const update = (key: keyof ProcessingParams, value: number | boolean) => {
     onChange({ ...params, [key]: value });
   };
 
@@ -192,6 +192,72 @@ export function ProcessingControls({
               max={2000}
               step={50}
               onChange={(v) => update("maxCellArea", v)}
+            />
+          </div>
+        )}
+      </div>
+
+      <div className="border-t border-border pt-3">
+        <button
+          className="flex items-center gap-1.5 text-xs font-medium text-muted-foreground hover:text-foreground transition-colors w-full cursor-pointer"
+          onClick={() => update("nlrMode", !params.nlrMode)}
+        >
+          <CircleDot className={`h-3.5 w-3.5 ${params.nlrMode ? "text-cyan-400" : ""}`} />
+          <span className={params.nlrMode ? "text-cyan-400 font-semibold" : ""}>
+            NLR Mode
+          </span>
+          <span className={`ml-auto text-[10px] px-1.5 py-0.5 rounded ${
+            params.nlrMode
+              ? "bg-cyan-400/20 text-cyan-400"
+              : "bg-muted text-muted-foreground"
+          }`}>
+            {params.nlrMode ? "ON" : "OFF"}
+          </span>
+        </button>
+
+        {params.nlrMode && (
+          <div className="mt-3 space-y-4 pl-1">
+            <ParamSlider
+              label="Min NLR Radius (px)"
+              value={params.nlrMinRadius}
+              min={20}
+              max={300}
+              step={5}
+              onChange={(v) => update("nlrMinRadius", v)}
+              color="text-cyan-400"
+            />
+            <ParamSlider
+              label="Max NLR Radius (px)"
+              value={params.nlrMaxRadius}
+              min={50}
+              max={500}
+              step={5}
+              onChange={(v) => update("nlrMaxRadius", v)}
+              color="text-cyan-400"
+            />
+            <ParamSlider
+              label="Edge Margin (px)"
+              value={params.nlrEdgeMargin}
+              min={0}
+              max={50}
+              step={1}
+              onChange={(v) => update("nlrEdgeMargin", v)}
+            />
+            <ParamSlider
+              label="Integrity Threshold (%)"
+              value={params.nlrIntegrity}
+              min={10}
+              max={90}
+              step={5}
+              onChange={(v) => update("nlrIntegrity", v)}
+            />
+            <ParamSlider
+              label="Hough Sensitivity"
+              value={params.nlrSensitivity}
+              min={10}
+              max={80}
+              step={5}
+              onChange={(v) => update("nlrSensitivity", v)}
             />
           </div>
         )}

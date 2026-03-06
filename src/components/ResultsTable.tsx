@@ -1,7 +1,7 @@
-import { useState, useCallback } from "react";
-import { ChevronUp, ChevronDown } from "lucide-react";
+import React, { useState, useCallback } from "react";
+import { ChevronUp, ChevronDown, ChevronRight } from "lucide-react";
 import { cn } from "@/lib/utils";
-import type { LoadedImage, ManualCell } from "@/lib/types";
+import type { LoadedImage, ManualCell, NLRData } from "@/lib/types";
 
 interface ResultsTableProps {
   images: LoadedImage[];
@@ -10,7 +10,7 @@ interface ResultsTableProps {
   onImageSelect: (id: string) => void;
 }
 
-type SortKey = "name" | "green" | "red" | "total" | "viability" | "confidence";
+type SortKey = "name" | "green" | "red" | "total" | "viability" | "confidence" | "nlrCount" | "stdViability";
 type SortDir = "asc" | "desc";
 
 function confidenceColor(pct: number): string {
@@ -34,6 +34,7 @@ interface Row {
   total: number | undefined;
   viabilityPct: number | undefined;
   confidence: number | undefined;
+  nlrData: NLRData | undefined;
 }
 
 function sortRows(rows: Row[], key: SortKey, dir: SortDir): Row[] {
@@ -57,6 +58,10 @@ function sortRows(rows: Row[], key: SortKey, dir: SortDir): Row[] {
         va = a.viabilityPct ?? -1; vb = b.viabilityPct ?? -1; break;
       case "confidence":
         va = a.confidence ?? -1; vb = b.confidence ?? -1; break;
+      case "nlrCount":
+        va = a.nlrData?.nlrCount ?? -1; vb = b.nlrData?.nlrCount ?? -1; break;
+      case "stdViability":
+        va = a.nlrData?.stdViabilityPct ?? -1; vb = b.nlrData?.stdViabilityPct ?? -1; break;
       default:
         return 0;
     }
@@ -70,6 +75,7 @@ function sortRows(rows: Row[], key: SortKey, dir: SortDir): Row[] {
 export function ResultsTable({ images, manualCells, selectedId, onImageSelect }: ResultsTableProps) {
   const [sortKey, setSortKey] = useState<SortKey>("name");
   const [sortDir, setSortDir] = useState<SortDir>("asc");
+  const [expandedImages, setExpandedImages] = useState<Set<string>>(new Set());
 
   const handleSort = useCallback((key: SortKey) => {
     if (key === sortKey) {
@@ -88,6 +94,16 @@ export function ResultsTable({ images, manualCells, selectedId, onImageSelect }:
     });
   }, [onImageSelect]);
 
+  const toggleExpand = useCallback((id: string, e: React.MouseEvent) => {
+    e.stopPropagation();
+    setExpandedImages(prev => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  }, []);
+
   if (images.length === 0) return null;
 
   const rows: Row[] = images.map((img) => {
@@ -100,8 +116,11 @@ export function ResultsTable({ images, manualCells, selectedId, onImageSelect }:
     const total = green !== undefined && red !== undefined ? green + red : undefined;
     const viabilityPct = total && total > 0 ? (green! / total) * 100 : undefined;
     const confidence = base?.confidence;
-    return { img, green, red, total, viabilityPct, confidence };
+    const nlrData = base?.nlrData;
+    return { img, green, red, total, viabilityPct, confidence, nlrData };
   });
+
+  const hasNlrData = rows.some((r) => r.nlrData !== undefined);
 
   const sortedRows = sortRows(rows, sortKey, sortDir);
 
@@ -140,85 +159,171 @@ export function ResultsTable({ images, manualCells, selectedId, onImageSelect }:
                 <th className={cn(thClass, "text-left text-muted-foreground")} onClick={() => handleSort("name")}>
                   Image Name <SortIcon col="name" />
                 </th>
+                {hasNlrData && (
+                  <th className={cn(thClass, "text-right text-cyan-400")} onClick={() => handleSort("nlrCount")}>
+                    NLRs <SortIcon col="nlrCount" />
+                  </th>
+                )}
                 <th className={cn(thClass, "text-right text-success")} onClick={() => handleSort("green")}>
-                  Green (Live) <SortIcon col="green" />
+                  {hasNlrData ? "Avg Green" : "Green (Live)"} <SortIcon col="green" />
                 </th>
                 <th className={cn(thClass, "text-right text-danger")} onClick={() => handleSort("red")}>
-                  Red (Dead) <SortIcon col="red" />
+                  {hasNlrData ? "Avg Red" : "Red (Dead)"} <SortIcon col="red" />
                 </th>
                 <th className={cn(thClass, "text-right text-muted-foreground")} onClick={() => handleSort("total")}>
-                  Total <SortIcon col="total" />
+                  {hasNlrData ? "Avg Total" : "Total"} <SortIcon col="total" />
                 </th>
                 <th className={cn(thClass, "text-right text-muted-foreground")} onClick={() => handleSort("viability")}>
-                  Viability <SortIcon col="viability" />
+                  {hasNlrData ? "Avg Viability" : "Viability"} <SortIcon col="viability" />
                 </th>
+                {hasNlrData && (
+                  <th className={cn(thClass, "text-right text-muted-foreground")} onClick={() => handleSort("stdViability")}>
+                    Std Viability <SortIcon col="stdViability" />
+                  </th>
+                )}
                 <th className={cn(thClass, "text-right text-muted-foreground")} onClick={() => handleSort("confidence")}>
                   Confidence <SortIcon col="confidence" />
                 </th>
               </tr>
             </thead>
             <tbody>
-              {sortedRows.map((r) => (
-                <tr
-                  key={r.img.id}
-                  onClick={() => handleRowClick(r.img.id)}
-                  className={cn(
-                    "border-b border-border/50 transition-colors cursor-pointer",
-                    selectedId === r.img.id
-                      ? "bg-primary/5"
-                      : "hover:bg-muted/30"
-                  )}
-                >
-                  <td className="pl-4 py-2">
-                    <span className={cn(
-                      "inline-block h-2 w-2 rounded-full",
-                      r.img.analysisStatus === "done" && "bg-success",
-                      r.img.analysisStatus === "analyzing" && "bg-primary animate-pulse",
-                      r.img.analysisStatus === "pending" && "bg-muted-foreground/40",
-                      r.img.analysisStatus === "failed" && "bg-danger",
-                    )} />
-                  </td>
-                  <td className="px-4 py-2 font-mono text-xs">
-                    {r.img.name}
-                    {r.img.analysisStatus === "failed" && (
-                      <span className="ml-2 text-danger text-[10px]">
-                        ({r.img.failureReason || "error"})
-                      </span>
-                    )}
-                  </td>
-                  <td className="px-4 py-2 text-right font-mono tabular-nums text-success">
-                    {r.green ?? "—"}
-                  </td>
-                  <td className="px-4 py-2 text-right font-mono tabular-nums text-danger">
-                    {r.red ?? "—"}
-                  </td>
-                  <td className="px-4 py-2 text-right font-mono tabular-nums">
-                    {r.total ?? "—"}
-                  </td>
-                  <td className="px-4 py-2 text-right font-mono tabular-nums">
-                    {r.viabilityPct !== undefined ? (
-                      <span
-                        className={
-                          r.viabilityPct >= 80
-                            ? "text-success"
-                            : r.viabilityPct >= 50
-                            ? "text-yellow-400"
-                            : "text-danger"
-                        }
+              {sortedRows.map((r) => {
+                const isExpanded = expandedImages.has(r.img.id);
+                const hasNlrs = r.nlrData && r.nlrData.nlrs.length > 0;
+
+                return (
+                  <React.Fragment key={r.img.id}>
+                    <tr
+                      onClick={() => handleRowClick(r.img.id)}
+                      className={cn(
+                        "border-b border-border/50 transition-colors cursor-pointer",
+                        selectedId === r.img.id
+                          ? "bg-primary/5"
+                          : "hover:bg-muted/30"
+                      )}
+                    >
+                      <td className="pl-4 py-2">
+                        {hasNlrs ? (
+                          <button
+                            onClick={(e) => toggleExpand(r.img.id, e)}
+                            className="p-0 hover:text-cyan-400 transition-colors"
+                          >
+                            <ChevronRight className={cn(
+                              "h-3.5 w-3.5 transition-transform",
+                              isExpanded && "rotate-90"
+                            )} />
+                          </button>
+                        ) : (
+                          <span className={cn(
+                            "inline-block h-2 w-2 rounded-full",
+                            r.img.analysisStatus === "done" && "bg-success",
+                            r.img.analysisStatus === "analyzing" && "bg-primary animate-pulse",
+                            r.img.analysisStatus === "pending" && "bg-muted-foreground/40",
+                            r.img.analysisStatus === "failed" && "bg-danger",
+                          )} />
+                        )}
+                      </td>
+                      <td className="px-4 py-2 font-mono text-xs">
+                        {r.img.name}
+                        {r.img.analysisStatus === "failed" && (
+                          <span className="ml-2 text-danger text-[10px]">
+                            ({r.img.failureReason || "error"})
+                          </span>
+                        )}
+                      </td>
+                      {hasNlrData && (
+                        <td className="px-4 py-2 text-right font-mono tabular-nums text-cyan-400">
+                          {r.nlrData?.nlrCount ?? "—"}
+                        </td>
+                      )}
+                      <td className="px-4 py-2 text-right font-mono tabular-nums text-success">
+                        {r.green !== undefined ? (r.nlrData ? r.nlrData.avgGreen.toFixed(1) : r.green) : "—"}
+                      </td>
+                      <td className="px-4 py-2 text-right font-mono tabular-nums text-danger">
+                        {r.red !== undefined ? (r.nlrData ? r.nlrData.avgRed.toFixed(1) : r.red) : "—"}
+                      </td>
+                      <td className="px-4 py-2 text-right font-mono tabular-nums">
+                        {r.total !== undefined ? (r.nlrData ? r.nlrData.avgTotal.toFixed(1) : r.total) : "—"}
+                      </td>
+                      <td className="px-4 py-2 text-right font-mono tabular-nums">
+                        {r.viabilityPct !== undefined ? (
+                          <span
+                            className={
+                              r.viabilityPct >= 80
+                                ? "text-success"
+                                : r.viabilityPct >= 50
+                                ? "text-yellow-400"
+                                : "text-danger"
+                            }
+                          >
+                            {(r.nlrData ? r.nlrData.avgViabilityPct : r.viabilityPct).toFixed(1)}%
+                          </span>
+                        ) : "—"}
+                      </td>
+                      {hasNlrData && (
+                        <td className="px-4 py-2 text-right font-mono tabular-nums text-muted-foreground">
+                          {r.nlrData ? `${r.nlrData.stdViabilityPct.toFixed(1)}%` : "—"}
+                        </td>
+                      )}
+                      <td className="px-4 py-2 text-right font-mono tabular-nums">
+                        {r.confidence !== undefined ? (
+                          <span className={confidenceColor(r.confidence)}>
+                            {r.confidence}%
+                          </span>
+                        ) : "—"}
+                      </td>
+                    </tr>
+
+                    {isExpanded && hasNlrs && r.nlrData!.nlrs.map((nlr) => (
+                      <tr
+                        key={`${r.img.id}-nlr-${nlr.id}`}
+                        onClick={() => handleRowClick(r.img.id)}
+                        className={cn(
+                          "border-b border-border/30 transition-colors cursor-pointer bg-muted/10",
+                          selectedId === r.img.id ? "bg-primary/3" : "hover:bg-muted/20"
+                        )}
                       >
-                        {r.viabilityPct.toFixed(1)}%
-                      </span>
-                    ) : "—"}
-                  </td>
-                  <td className="px-4 py-2 text-right font-mono tabular-nums">
-                    {r.confidence !== undefined ? (
-                      <span className={confidenceColor(r.confidence)}>
-                        {r.confidence}%
-                      </span>
-                    ) : "—"}
-                  </td>
-                </tr>
-              ))}
+                        <td className="pl-4 py-1.5" />
+                        <td className="px-4 py-1.5 font-mono text-xs text-muted-foreground pl-8">
+                          <span className="text-cyan-400/70">NLR #{nlr.id}</span>
+                          <span className="ml-2 text-[10px] text-muted-foreground/60">
+                            (r={nlr.radius}px, {nlr.integrity}% integrity)
+                          </span>
+                        </td>
+                        {hasNlrData && (
+                          <td className="px-4 py-1.5 text-right font-mono tabular-nums text-muted-foreground/40">
+                            —
+                          </td>
+                        )}
+                        <td className="px-4 py-1.5 text-right font-mono tabular-nums text-success/70 text-xs">
+                          {nlr.green}
+                        </td>
+                        <td className="px-4 py-1.5 text-right font-mono tabular-nums text-danger/70 text-xs">
+                          {nlr.red}
+                        </td>
+                        <td className="px-4 py-1.5 text-right font-mono tabular-nums text-xs">
+                          {nlr.total}
+                        </td>
+                        <td className="px-4 py-1.5 text-right font-mono tabular-nums text-xs">
+                          <span className={
+                            nlr.viabilityPct >= 80
+                              ? "text-success/70"
+                              : nlr.viabilityPct >= 50
+                              ? "text-yellow-400/70"
+                              : "text-danger/70"
+                          }>
+                            {nlr.viabilityPct.toFixed(1)}%
+                          </span>
+                        </td>
+                        {hasNlrData && (
+                          <td className="px-4 py-1.5 text-right" />
+                        )}
+                        <td className="px-4 py-1.5 text-right" />
+                      </tr>
+                    ))}
+                  </React.Fragment>
+                );
+              })}
             </tbody>
             {analyzed.length > 1 && (
               <tfoot>
@@ -227,6 +332,11 @@ export function ResultsTable({ images, manualCells, selectedId, onImageSelect }:
                   <td className="px-4 py-2.5 text-xs uppercase tracking-wider text-muted-foreground">
                     Summary ({analyzed.length}/{images.length} images)
                   </td>
+                  {hasNlrData && (
+                    <td className="px-4 py-2.5 text-right font-mono tabular-nums text-cyan-400">
+                      {analyzed.reduce((s, r) => s + (r.nlrData?.nlrCount ?? 0), 0)}
+                    </td>
+                  )}
                   <td className="px-4 py-2.5 text-right font-mono tabular-nums text-success">
                     {totals.green}
                   </td>
@@ -249,6 +359,9 @@ export function ResultsTable({ images, manualCells, selectedId, onImageSelect }:
                       {avgViability.toFixed(1)}%
                     </span>
                   </td>
+                  {hasNlrData && (
+                    <td className="px-4 py-2.5 text-right font-mono tabular-nums text-muted-foreground" />
+                  )}
                   <td className="px-4 py-2.5 text-right font-mono tabular-nums">
                     <span className={confidenceColor(avgConfidence)}>
                       {avgConfidence}%
