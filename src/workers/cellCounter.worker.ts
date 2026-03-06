@@ -344,20 +344,24 @@ const workerApi = {
 
     if (cachedNormalized) { deleteSafe(cachedNormalized); cachedNormalized = null; }
 
-    const src = cv.matFromImageData(imageData);
-    const rgb = new cv.Mat();
-    cv.cvtColor(src, rgb, cv.COLOR_RGBA2RGB);
-    const normalized = subtractBackground(cv, rgb);
+    let src: any = null, rgb: any = null, rgba: any = null;
+    try {
+      src = cv.matFromImageData(imageData);
+      rgb = new cv.Mat();
+      cv.cvtColor(src, rgb, cv.COLOR_RGBA2RGB);
+      const normalized = subtractBackground(cv, rgb);
 
-    cachedNormalized = normalized;
-    cachedWidth = normalized.cols;
-    cachedHeight = normalized.rows;
+      cachedNormalized = normalized;
+      cachedWidth = normalized.cols;
+      cachedHeight = normalized.rows;
 
-    const rgba = new cv.Mat();
-    cv.cvtColor(normalized, rgba, cv.COLOR_RGB2RGBA);
-    const buffer = new Uint8ClampedArray(rgba.data).buffer.slice(0);
-    deleteSafe(src, rgb, rgba);
-    return { buffer, width: cachedWidth, height: cachedHeight };
+      rgba = new cv.Mat();
+      cv.cvtColor(normalized, rgba, cv.COLOR_RGB2RGBA);
+      const buffer = new Uint8ClampedArray(rgba.data).buffer.slice(0);
+      return { buffer, width: cachedWidth, height: cachedHeight };
+    } finally {
+      deleteSafe(src, rgb, rgba);
+    }
   },
 
   clearCache() {

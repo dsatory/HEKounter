@@ -131,7 +131,6 @@ function App() {
       try {
         const params = getParamsForImage(img.id);
         const res = await cacheAndPreview(img.file, params);
-        await clearCache();
 
         const result: CellCountResult = {
           imageName: img.name,
@@ -164,6 +163,8 @@ function App() {
               : i
           )
         );
+      } finally {
+        try { await clearCache(); } catch { /* worker may be recovering */ }
       }
     }
 
@@ -476,7 +477,7 @@ function App() {
           </div>
 
           <div className="col-span-4 space-y-4">
-            <div className="sticky top-20 space-y-4 max-h-[calc(100vh-6rem)] overflow-y-auto">
+            <div className="sticky top-20 space-y-4">
               <div className="rounded-lg border border-border bg-card p-4">
                 <ProcessingControls
                   params={activeParams}
@@ -497,7 +498,7 @@ function App() {
                       <span className="text-yellow-400 ml-1">· {pendingCount} queued</span>
                     )}
                   </h3>
-                  <div className="space-y-0.5 max-h-[300px] overflow-y-auto">
+                  <div className="space-y-0.5">
                     {images.map((img) => (
                       <button
                         key={img.id}
