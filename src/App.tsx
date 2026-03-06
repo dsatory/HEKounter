@@ -453,18 +453,18 @@ function App() {
         </div>
       )}
 
-      <main className="max-w-7xl mx-auto px-4 py-6">
+      <main className="max-w-7xl mx-auto px-4 py-6 space-y-4">
+        <ImageDropzone
+          images={images}
+          onImagesAdded={handleImagesAdded}
+          onImageRemove={handleImageRemove}
+          onImageSelect={handleImageSelect}
+          selectedId={selectedId}
+          customParamsIds={new Set(imageParamsMap.keys())}
+        />
+
         <div className="grid grid-cols-12 gap-6">
           <div className="col-span-8 space-y-4">
-            <ImageDropzone
-              images={images}
-              onImagesAdded={handleImagesAdded}
-              onImageRemove={handleImageRemove}
-              onImageSelect={handleImageSelect}
-              selectedId={selectedId}
-              customParamsIds={new Set(imageParamsMap.keys())}
-            />
-
             {selectedImage && annotatedUrl && (
               <div className="flex items-center gap-2 p-2 rounded-lg border border-border bg-card">
                 <span className="text-xs text-muted-foreground mr-1">
@@ -517,11 +517,9 @@ function App() {
               onManualCellAdd={handleManualCellAdd}
               imageNaturalSize={imageNaturalSize}
             />
-
-            {allResults.length > 0 && <ResultsTable results={allResults} />}
           </div>
 
-          <div className="col-span-4 space-y-4">
+          <div className="col-span-4">
             <div className="sticky top-20 space-y-4">
               <div className="rounded-lg border border-border bg-card p-4">
                 <ProcessingControls
@@ -579,6 +577,8 @@ function App() {
             </div>
           </div>
         </div>
+
+        {allResults.length > 0 && <ResultsTable results={allResults} />}
       </main>
     </div>
   );

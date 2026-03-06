@@ -73,7 +73,7 @@ export function ImagePreview({
   return (
     <div className="rounded-lg border border-border bg-card overflow-hidden">
       <div className="p-3 border-b border-border flex items-center justify-between">
-        <span className="text-sm font-medium truncate max-w-[200px]">
+        <span className="text-sm font-medium truncate min-w-0">
           {imageName}
         </span>
         {result && (
