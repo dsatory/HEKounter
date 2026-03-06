@@ -27,10 +27,12 @@ function App() {
   const [manualCells, setManualCells] = useState<Map<string, ManualCell[]>>(new Map());
   const [imageNaturalSize, setImageNaturalSize] = useState<{ width: number; height: number } | undefined>();
   const [liveResult, setLiveResult] = useState<CellCountResult | undefined>();
-  const [analysisProgress, setAnalysisProgress] = useState<{ current: number; total: number } | null>(null);
 
-  const normalizeQueueRef = useRef<LoadedImage[]>([]);
-  const normalizingRef = useRef(false);
+  const [batchRunning, setBatchRunning] = useState(false);
+  const [batchProgress, setBatchProgress] = useState<{ current: number; total: number } | null>(null);
+
+  const analyzeQueueRef = useRef<LoadedImage[]>([]);
+  const analyzingRef = useRef(false);
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const cachedForImageRef = useRef<string>("");
   const globalParamsRef = useRef(globalParams);
@@ -40,7 +42,7 @@ function App() {
 
   const {
     ready, loading, error,
-    normalizeImage, cacheAndPreview, fastReThreshold,
+    cacheAndPreview, fastReThreshold, clearCache,
   } = useImageProcessor();
 
   const selectedImage = images.find((img) => img.id === selectedId);
@@ -56,7 +58,7 @@ function App() {
     []
   );
 
-  // Derive results from images + manual cells for CSV/table
+  // Derive results from images + manual cells
   const allResults = useMemo(() => {
     return images
       .filter((img) => img.result)
@@ -108,26 +110,28 @@ function App() {
     });
   }, [selectedImage]);
 
-  // ── Auto normalize + analyze queue ─────────────────────────────
-  const processNormalizeQueue = useCallback(async () => {
-    if (normalizingRef.current || !ready) return;
-    normalizingRef.current = true;
+  // ── Auto analyze queue ─────────────────────────────────────────
+  const processAnalyzeQueue = useCallback(async () => {
+    if (analyzingRef.current || !ready) return;
+    analyzingRef.current = true;
+    setBatchRunning(true);
 
-    const total = normalizeQueueRef.current.length;
+    const total = analyzeQueueRef.current.length;
     let processed = 0;
 
-    while (normalizeQueueRef.current.length > 0) {
-      const img = normalizeQueueRef.current.shift()!;
+    while (analyzeQueueRef.current.length > 0) {
+      const img = analyzeQueueRef.current.shift()!;
       processed++;
-      setAnalysisProgress({ current: processed, total });
+      setBatchProgress({ current: processed, total });
+
+      setImages((prev) =>
+        prev.map((i) => (i.id === img.id ? { ...i, analysisStatus: "analyzing" } : i))
+      );
 
       try {
-        setImages((prev) =>
-          prev.map((i) => (i.id === img.id ? { ...i, normalizing: true } : i))
-        );
-
         const params = getParamsForImage(img.id);
         const res = await cacheAndPreview(img.file, params);
+        await clearCache();
 
         const result: CellCountResult = {
           imageName: img.name,
@@ -140,38 +144,40 @@ function App() {
         setImages((prev) =>
           prev.map((i) =>
             i.id === img.id
-              ? { ...i, normalizedUrl: res.normalizedDataUrl, normalizing: false, result }
+              ? {
+                  ...i,
+                  normalizedUrl: res.normalizedDataUrl,
+                  annotatedUrl: res.annotatedDataUrl,
+                  analysisStatus: "done" as const,
+                  result,
+                }
               : i
           )
         );
       } catch (e) {
-        console.error(`Analysis failed for ${img.name}:`, e);
-        // Fallback: try normalize-only
-        try {
-          const url = await normalizeImage(img.file);
-          setImages((prev) =>
-            prev.map((i) =>
-              i.id === img.id ? { ...i, normalizedUrl: url, normalizing: false } : i
-            )
-          );
-        } catch {
-          setImages((prev) =>
-            prev.map((i) => (i.id === img.id ? { ...i, normalizing: false } : i))
-          );
-        }
+        const reason = e instanceof Error ? e.message : "Unknown error";
+        console.error(`Analysis failed for ${img.name}:`, reason);
+        setImages((prev) =>
+          prev.map((i) =>
+            i.id === img.id
+              ? { ...i, analysisStatus: "failed" as const, failureReason: reason }
+              : i
+          )
+        );
       }
     }
 
     cachedForImageRef.current = "";
-    normalizingRef.current = false;
-    setAnalysisProgress(null);
-  }, [ready, normalizeImage, cacheAndPreview, getParamsForImage]);
+    analyzingRef.current = false;
+    setBatchRunning(false);
+    setBatchProgress(null);
+  }, [ready, cacheAndPreview, clearCache, getParamsForImage]);
 
   useEffect(() => {
-    if (ready && normalizeQueueRef.current.length > 0) {
-      processNormalizeQueue();
+    if (ready && analyzeQueueRef.current.length > 0 && !analyzingRef.current) {
+      processAnalyzeQueue();
     }
-  }, [ready, processNormalizeQueue]);
+  }, [ready, processAnalyzeQueue]);
 
   // ── Debounced real-time threshold update ───────────────────────────
   const runFastPreview = useCallback(async (p: ProcessingParams) => {
@@ -193,7 +199,9 @@ function App() {
         };
         setLiveResult(result);
         setImages((prev) =>
-          prev.map((i) => (i.id === selectedImage.id ? { ...i, result } : i))
+          prev.map((i) => (i.id === selectedImage.id
+            ? { ...i, result, annotatedUrl: res.annotatedDataUrl }
+            : i))
         );
       } catch (e) {
         console.error("Cache+preview failed:", e);
@@ -214,7 +222,9 @@ function App() {
         };
         setLiveResult(result);
         setImages((prev) =>
-          prev.map((i) => (i.id === selectedImage.id ? { ...i, result } : i))
+          prev.map((i) => (i.id === selectedImage.id
+            ? { ...i, result, annotatedUrl: res.annotatedDataUrl }
+            : i))
         );
       }
     } catch (e) {
@@ -223,7 +233,7 @@ function App() {
   }, [selectedImage, ready, cacheAndPreview, fastReThreshold]);
 
   useEffect(() => {
-    if (!selectedImage || !ready || normalizingRef.current) return;
+    if (!selectedImage || !ready || batchRunning) return;
 
     if (debounceRef.current) clearTimeout(debounceRef.current);
     debounceRef.current = setTimeout(() => {
@@ -233,7 +243,7 @@ function App() {
     return () => {
       if (debounceRef.current) clearTimeout(debounceRef.current);
     };
-  }, [activeParams, selectedImage?.id, ready, runFastPreview]);
+  }, [activeParams, selectedImage?.id, ready, batchRunning, runFastPreview]);
 
   // ── Image management ──────────────────────────────────────────────
   const handleImagesAdded = useCallback((files: File[]) => {
@@ -242,14 +252,15 @@ function App() {
       file: f,
       name: f.name,
       previewUrl: URL.createObjectURL(f),
+      analysisStatus: "pending" as const,
     }));
     setImages((prev) => [...prev, ...newImages]);
     if (!selectedId && newImages.length > 0) {
       setSelectedId(newImages[0].id);
     }
-    normalizeQueueRef.current.push(...newImages);
-    if (ready) processNormalizeQueue();
-  }, [selectedId, ready, processNormalizeQueue]);
+    analyzeQueueRef.current.push(...newImages);
+    if (ready && !analyzingRef.current) processAnalyzeQueue();
+  }, [selectedId, ready, processAnalyzeQueue]);
 
   const handleImageRemove = useCallback((id: string) => {
     setImages((prev) => {
@@ -265,7 +276,7 @@ function App() {
     });
     setManualCells((prev) => { const n = new Map(prev); n.delete(id); return n; });
     setImageParamsMap((prev) => { const n = new Map(prev); n.delete(id); return n; });
-    normalizeQueueRef.current = normalizeQueueRef.current.filter((i) => i.id !== id);
+    analyzeQueueRef.current = analyzeQueueRef.current.filter((i) => i.id !== id);
   }, [selectedId]);
 
   const handleImageSelect = useCallback((id: string) => {
@@ -274,9 +285,9 @@ function App() {
     if (!img) return;
 
     setNormalizedUrl(img.normalizedUrl);
-    cachedForImageRef.current = "";
-    setAnnotatedUrl(undefined);
+    setAnnotatedUrl(img.annotatedUrl);
     setLiveResult(img.result || undefined);
+    cachedForImageRef.current = "";
   }, [images]);
 
   useEffect(() => {
@@ -285,8 +296,11 @@ function App() {
       if (img?.normalizedUrl && !normalizedUrl) {
         setNormalizedUrl(img.normalizedUrl);
       }
+      if (img?.annotatedUrl && !annotatedUrl) {
+        setAnnotatedUrl(img.annotatedUrl);
+      }
     }
-  }, [images, selectedId, normalizedUrl]);
+  }, [images, selectedId, normalizedUrl, annotatedUrl]);
 
   // ── Manual cell clicker ───────────────────────────────────────────
   const handleManualCellAdd = useCallback((cell: ManualCell) => {
@@ -318,7 +332,7 @@ function App() {
 
   const handleClearAll = useCallback(() => {
     images.forEach((img) => URL.revokeObjectURL(img.previewUrl));
-    normalizeQueueRef.current = [];
+    analyzeQueueRef.current = [];
     cachedForImageRef.current = "";
     setImages([]);
     setSelectedId(undefined);
@@ -328,12 +342,15 @@ function App() {
     setManualCells(new Map());
     setImageParamsMap(new Map());
     setClickMode("off");
-    setAnalysisProgress(null);
+    setBatchProgress(null);
   }, [images]);
 
   const displayResult = liveResult || selectedImage?.result;
   const customCount = imageParamsMap.size;
-  const analyzedCount = images.filter((i) => i.result).length;
+
+  const doneCount = images.filter((i) => i.analysisStatus === "done").length;
+  const failedCount = images.filter((i) => i.analysisStatus === "failed").length;
+  const pendingCount = images.filter((i) => i.analysisStatus === "pending" || i.analysisStatus === "analyzing").length;
 
   return (
     <div className="min-h-screen bg-background">
@@ -358,10 +375,10 @@ function App() {
                 Loading OpenCV...
               </div>
             )}
-            {analysisProgress && (
+            {batchProgress && (
               <div className="flex items-center gap-2 text-sm text-muted-foreground mr-2">
                 <Loader2 className="h-4 w-4 animate-spin" />
-                Analyzing {analysisProgress.current}/{analysisProgress.total}...
+                Analyzing {batchProgress.current}/{batchProgress.total}...
               </div>
             )}
             {error && <span className="text-sm text-danger mr-2">{error}</span>}
@@ -370,13 +387,14 @@ function App() {
                 {customCount} custom
               </span>
             )}
-            {images.length > 0 && !analysisProgress && analyzedCount > 0 && (
+            {images.length > 0 && !batchProgress && (
               <span className="text-[11px] text-muted-foreground mr-1">
-                {analyzedCount}/{images.length} analyzed
+                {doneCount}/{images.length} analyzed
+                {failedCount > 0 && <span className="text-danger ml-1">({failedCount} failed)</span>}
               </span>
             )}
             {images.length > 0 && (
-              <Button variant="ghost" size="sm" onClick={handleClearAll} disabled={!!analysisProgress}>
+              <Button variant="ghost" size="sm" onClick={handleClearAll} disabled={batchRunning}>
                 <Trash2 className="h-4 w-4 mr-1" />
                 Clear All
               </Button>
@@ -457,17 +475,61 @@ function App() {
             {allResults.length > 0 && <ResultsTable results={allResults} />}
           </div>
 
-          <div className="col-span-4">
-            <div className="sticky top-20 rounded-lg border border-border bg-card p-4 max-h-[calc(100vh-6rem)] overflow-y-auto">
-              <ProcessingControls
-                params={activeParams}
-                onChange={handleParamsChange}
-                isCustom={isCustom}
-                imageName={selectedImage?.name}
-                onApplyToAll={handleApplyToAll}
-                onResetToGlobal={handleResetToGlobal}
-                imageCount={images.length}
-              />
+          <div className="col-span-4 space-y-4">
+            <div className="sticky top-20 space-y-4 max-h-[calc(100vh-6rem)] overflow-y-auto">
+              <div className="rounded-lg border border-border bg-card p-4">
+                <ProcessingControls
+                  params={activeParams}
+                  onChange={handleParamsChange}
+                  isCustom={isCustom}
+                  imageName={selectedImage?.name}
+                  onApplyToAll={handleApplyToAll}
+                  onResetToGlobal={handleResetToGlobal}
+                  imageCount={images.length}
+                />
+              </div>
+
+              {images.length > 0 && (
+                <div className="rounded-lg border border-border bg-card p-3">
+                  <h3 className="text-xs font-semibold mb-2 text-muted-foreground uppercase tracking-wider">
+                    Image Status ({doneCount}/{images.length})
+                    {pendingCount > 0 && !batchRunning && (
+                      <span className="text-yellow-400 ml-1">· {pendingCount} queued</span>
+                    )}
+                  </h3>
+                  <div className="space-y-0.5 max-h-[300px] overflow-y-auto">
+                    {images.map((img) => (
+                      <button
+                        key={img.id}
+                        onClick={() => handleImageSelect(img.id)}
+                        className={cn(
+                          "w-full text-left px-2 py-1 rounded text-xs flex items-center gap-2 transition-colors cursor-pointer",
+                          selectedId === img.id
+                            ? "bg-primary/10 text-foreground"
+                            : "hover:bg-muted/50 text-muted-foreground"
+                        )}
+                      >
+                        <span className={cn(
+                          "h-2 w-2 rounded-full shrink-0",
+                          img.analysisStatus === "done" && "bg-success",
+                          img.analysisStatus === "analyzing" && "bg-primary animate-pulse",
+                          img.analysisStatus === "pending" && "bg-muted-foreground/40",
+                          img.analysisStatus === "failed" && "bg-danger",
+                        )} />
+                        <span className="truncate flex-1">{img.name}</span>
+                        {img.analysisStatus === "done" && img.result && (
+                          <span className="text-[10px] tabular-nums text-muted-foreground shrink-0">
+                            {img.result.green + img.result.red}
+                          </span>
+                        )}
+                        {img.analysisStatus === "failed" && (
+                          <span className="text-[10px] text-danger shrink-0">error</span>
+                        )}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              )}
             </div>
           </div>
         </div>

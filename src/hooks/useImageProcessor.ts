@@ -1,7 +1,7 @@
 import { useRef, useState, useCallback, useEffect } from "react";
 import * as Comlink from "comlink";
 import type { WorkerApi } from "../workers/cellCounter.worker";
-import type { ProcessingParams, CellCountResult, ProcessingProgress } from "../lib/types";
+import type { ProcessingParams } from "../lib/types";
 
 function bufferToDataUrl(buffer: ArrayBuffer, width: number, height: number): string {
   const clamped = new Uint8ClampedArray(buffer);
@@ -30,8 +30,6 @@ export function useImageProcessor() {
   const apiRef = useRef<Comlink.Remote<WorkerApi> | null>(null);
   const [ready, setReady] = useState(false);
   const [loading, setLoading] = useState(true);
-  const [processing, setProcessing] = useState(false);
-  const [progress, setProgress] = useState<ProcessingProgress | null>(null);
   const [error, setError] = useState<string | null>(null);
   const cachedNameRef = useRef<string>("");
 
@@ -129,38 +127,14 @@ export function useImageProcessor() {
     };
   }, [ready]);
 
-  const processBatch = useCallback(async (
-    files: File[],
-    paramsPerFile: ProcessingParams[],
-    onResult: (result: CellCountResult, index: number) => void
-  ): Promise<CellCountResult[]> => {
-    if (!apiRef.current || !ready) throw new Error("OpenCV not ready");
-    setProcessing(true);
-    const results: CellCountResult[] = [];
-
-    for (let i = 0; i < files.length; i++) {
-      setProgress({ current: i + 1, total: files.length, currentName: files[i].name });
-      try {
-        const imageData = await loadImageData(files[i]);
-        const result = await apiRef.current.processImage(imageData, files[i].name, paramsPerFile[i]);
-        results.push(result);
-        onResult(result, i);
-      } catch (e) {
-        const errResult: CellCountResult = {
-          imageName: files[i].name, green: 0, red: 0, total: 0, viabilityPct: 0,
-        };
-        results.push(errResult);
-        onResult(errResult, i);
-      }
+  const clearCache = useCallback(async () => {
+    if (apiRef.current) {
+      await apiRef.current.clearCache();
     }
-
-    setProcessing(false);
-    setProgress(null);
-    return results;
-  }, [ready, loadImageData]);
+  }, []);
 
   return {
-    ready, loading, processing, progress, error,
-    normalizeImage, cacheAndPreview, fastReThreshold, processBatch,
+    ready, loading, error,
+    normalizeImage, cacheAndPreview, fastReThreshold, clearCache,
   };
 }

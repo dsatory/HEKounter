@@ -31,16 +31,18 @@ export interface ManualCell {
   type: "green" | "red";
 }
 
+export type AnalysisStatus = "pending" | "analyzing" | "done" | "failed";
+
 export interface LoadedImage {
   id: string;
   file: File;
   name: string;
   previewUrl: string;
   normalizedUrl?: string;
-  normalizing?: boolean;
+  annotatedUrl?: string;
+  analysisStatus: AnalysisStatus;
   result?: CellCountResult;
-  processing?: boolean;
-  manualCells?: ManualCell[];
+  failureReason?: string;
 }
 
 export interface ProcessingProgress {

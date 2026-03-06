@@ -107,14 +107,14 @@ export function ImageDropzone({
                 alt={img.name}
                 className="w-full h-full object-cover bg-black"
               />
-              {img.normalizing && (
+              {img.analysisStatus === "analyzing" && (
                 <div className="absolute inset-0 bg-background/60 flex items-center justify-center">
                   <div className="h-3 w-3 border-2 border-primary border-t-transparent rounded-full animate-spin" />
                 </div>
               )}
-              {img.processing && (
+              {img.analysisStatus === "failed" && (
                 <div className="absolute inset-0 bg-background/60 flex items-center justify-center">
-                  <div className="h-4 w-4 border-2 border-primary border-t-transparent rounded-full animate-spin" />
+                  <span className="text-[10px] text-danger font-medium">Failed</span>
                 </div>
               )}
               {img.result && (
