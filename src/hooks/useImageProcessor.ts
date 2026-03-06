@@ -14,6 +14,13 @@ function bufferToDataUrl(buffer: ArrayBuffer, width: number, height: number): st
   return canvas.toDataURL("image/png");
 }
 
+function createWorker() {
+  return new Worker(
+    new URL("../workers/cellCounter.worker.ts", import.meta.url),
+    { type: "module" }
+  );
+}
+
 export interface FastPreviewResult {
   annotatedDataUrl: string;
   normalizedDataUrl: string;
@@ -31,26 +38,36 @@ export function useImageProcessor() {
   const [ready, setReady] = useState(false);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const cachedNameRef = useRef<string>("");
 
-  useEffect(() => {
-    const worker = new Worker(
-      new URL("../workers/cellCounter.worker.ts", import.meta.url),
-      { type: "module" }
-    );
+  const initWorker = useCallback(async () => {
+    if (workerRef.current) {
+      workerRef.current.terminate();
+    }
+
+    const worker = createWorker();
     workerRef.current = worker;
     const api = Comlink.wrap<WorkerApi>(worker);
     apiRef.current = api;
 
-    api.init()
-      .then(() => { setReady(true); setLoading(false); })
-      .catch((e: Error) => {
-        setError(`Failed to initialize OpenCV: ${e.message}`);
-        setLoading(false);
-      });
+    setReady(false);
+    setLoading(true);
+    setError(null);
 
-    return () => { worker.terminate(); };
+    try {
+      await api.init();
+      setReady(true);
+    } catch (e: unknown) {
+      const msg = e instanceof Error ? e.message : String(e);
+      setError(`Failed to initialize OpenCV: ${msg}`);
+    } finally {
+      setLoading(false);
+    }
   }, []);
+
+  useEffect(() => {
+    initWorker();
+    return () => { workerRef.current?.terminate(); };
+  }, [initWorker]);
 
   const loadImageData = useCallback(async (file: File): Promise<ImageData> => {
     return new Promise((resolve, reject) => {
@@ -77,7 +94,6 @@ export function useImageProcessor() {
     return bufferToDataUrl(buffer, width, height);
   }, [ready, loadImageData]);
 
-  // Cache the normalized image and return its data URL + initial fast preview
   const cacheAndPreview = useCallback(async (
     file: File,
     params: ProcessingParams
@@ -85,12 +101,9 @@ export function useImageProcessor() {
     if (!apiRef.current || !ready) throw new Error("OpenCV not ready");
     const imageData = await loadImageData(file);
 
-    // Cache the normalized image in worker
     const { buffer, width, height } = await apiRef.current.cacheNormalized(imageData, file.name);
-    cachedNameRef.current = file.name;
     const normalizedDataUrl = bufferToDataUrl(buffer, width, height);
 
-    // Run fast threshold detection
     const result = await apiRef.current.fastReThreshold(params);
     if (!result) throw new Error("Cache miss");
 
@@ -106,7 +119,6 @@ export function useImageProcessor() {
     };
   }, [ready, loadImageData]);
 
-  // Fast re-threshold on already-cached image (for real-time slider updates)
   const fastReThreshold = useCallback(async (
     params: ProcessingParams
   ): Promise<FastPreviewResult | null> => {
@@ -116,7 +128,7 @@ export function useImageProcessor() {
     if (!result) return null;
 
     return {
-      normalizedDataUrl: "",  // caller already has this
+      normalizedDataUrl: "",
       annotatedDataUrl: bufferToDataUrl(result.annotatedBuffer, result.width, result.height),
       green: result.green,
       red: result.red,
@@ -133,8 +145,12 @@ export function useImageProcessor() {
     }
   }, []);
 
+  const restartWorker = useCallback(async () => {
+    await initWorker();
+  }, [initWorker]);
+
   return {
     ready, loading, error,
-    normalizeImage, cacheAndPreview, fastReThreshold, clearCache,
+    normalizeImage, cacheAndPreview, fastReThreshold, clearCache, restartWorker,
   };
 }

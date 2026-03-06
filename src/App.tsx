@@ -1,5 +1,5 @@
 import { useState, useCallback, useEffect, useRef, useMemo } from "react";
-import { Microscope, Download, Loader2, Trash2, MousePointer, Undo2 } from "lucide-react";
+import { Microscope, Download, Loader2, Trash2, MousePointer, Undo2, RefreshCw, AlertTriangle } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { ImageDropzone } from "@/components/ImageDropzone";
 import { ProcessingControls } from "@/components/ProcessingControls";
@@ -42,7 +42,7 @@ function App() {
 
   const {
     ready, loading, error,
-    cacheAndPreview, fastReThreshold, clearCache,
+    cacheAndPreview, fastReThreshold, clearCache, restartWorker,
   } = useImageProcessor();
 
   const selectedImage = images.find((img) => img.id === selectedId);
@@ -154,8 +154,13 @@ function App() {
           )
         );
       } catch (e) {
-        const reason = e instanceof Error ? e.message : "Unknown error";
-        console.error(`Analysis failed for ${img.name}:`, reason);
+        const raw = e instanceof Error ? e.message : String(e);
+        const reason = raw.includes("memory")
+          ? "Out of memory — image may be too large"
+          : raw.includes("load")
+          ? "Failed to load image file"
+          : `Processing error: ${raw.slice(0, 80)}`;
+        console.error(`Analysis failed for ${img.name}:`, raw);
         setImages((prev) =>
           prev.map((i) =>
             i.id === img.id
@@ -172,7 +177,10 @@ function App() {
     analyzingRef.current = false;
     setBatchRunning(false);
     setBatchProgress(null);
-  }, [ready, cacheAndPreview, clearCache, getParamsForImage]);
+
+    // Restart worker to reclaim WASM memory after batch
+    await restartWorker();
+  }, [ready, cacheAndPreview, clearCache, getParamsForImage, restartWorker]);
 
   useEffect(() => {
     if (ready && analyzeQueueRef.current.length > 0 && !analyzingRef.current) {
@@ -326,6 +334,21 @@ function App() {
     });
   }, [selectedImage]);
 
+  const handleRetryFailed = useCallback(() => {
+    const failed = images.filter((i) => i.analysisStatus === "failed");
+    if (failed.length === 0 || batchRunning) return;
+
+    setImages((prev) =>
+      prev.map((i) =>
+        i.analysisStatus === "failed"
+          ? { ...i, analysisStatus: "pending" as const, failureReason: undefined }
+          : i
+      )
+    );
+    analyzeQueueRef.current.push(...failed);
+    if (ready && !analyzingRef.current) processAnalyzeQueue();
+  }, [images, batchRunning, ready, processAnalyzeQueue]);
+
   const handleExportCSV = useCallback(() => {
     if (allResults.length === 0) return;
     downloadCSV(allResults);
@@ -391,8 +414,18 @@ function App() {
             {images.length > 0 && !batchProgress && (
               <span className="text-[11px] text-muted-foreground mr-1">
                 {doneCount}/{images.length} analyzed
-                {failedCount > 0 && <span className="text-danger ml-1">({failedCount} failed)</span>}
               </span>
+            )}
+            {failedCount > 0 && !batchRunning && (
+              <Button
+                variant="outline"
+                size="sm"
+                className="text-danger border-danger/40 hover:bg-danger/10"
+                onClick={handleRetryFailed}
+              >
+                <RefreshCw className="h-3.5 w-3.5 mr-1" />
+                Retry {failedCount} failed
+              </Button>
             )}
             {images.length > 0 && (
               <Button variant="ghost" size="sm" onClick={handleClearAll} disabled={batchRunning}>
@@ -407,6 +440,18 @@ function App() {
           </div>
         </div>
       </header>
+
+      {failedCount > 0 && !batchRunning && (
+        <div className="bg-danger/10 border-b border-danger/30 px-4 py-2">
+          <div className="max-w-7xl mx-auto flex items-center gap-2 text-sm">
+            <AlertTriangle className="h-4 w-4 text-danger shrink-0" />
+            <span className="text-danger font-medium">{failedCount} image{failedCount > 1 ? "s" : ""} failed to process</span>
+            <span className="text-muted-foreground">
+              — this is a browser memory limitation, not an issue with your images. Click "Retry failed" to try again with a fresh engine.
+            </span>
+          </div>
+        </div>
+      )}
 
       <main className="max-w-7xl mx-auto px-4 py-6">
         <div className="grid grid-cols-12 gap-6">
