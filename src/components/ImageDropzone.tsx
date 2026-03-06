@@ -27,9 +27,11 @@ export function ImageDropzone({
     (e: React.DragEvent) => {
       e.preventDefault();
       setDragOver(false);
-      const files = Array.from(e.dataTransfer.files).filter((f) =>
-        f.type.startsWith("image/")
-      );
+      const files = Array.from(e.dataTransfer.files).filter((f) => {
+        if (f.type.startsWith("image/")) return true;
+        const ext = f.name.toLowerCase();
+        return ext.endsWith(".tif") || ext.endsWith(".tiff");
+      });
       if (files.length > 0) onImagesAdded(files);
     },
     [onImagesAdded]
@@ -64,7 +66,7 @@ export function ImageDropzone({
         <input
           ref={inputRef}
           type="file"
-          accept="image/*"
+          accept="image/*,.tif,.tiff"
           multiple
           className="hidden"
           onChange={handleFileInput}
@@ -74,7 +76,7 @@ export function ImageDropzone({
             <>
               <Upload className="h-8 w-8" />
               <p className="text-sm font-medium">
-                Drop microscopy images here or click to browse
+                Drop microscopy images here or click to browse (PNG, JPG, TIFF)
               </p>
               <p className="text-xs">
                 Supports PNG, JPEG, TIFF
@@ -90,7 +92,7 @@ export function ImageDropzone({
       </div>
 
       {images.length > 0 && (
-        <div className="grid grid-cols-8 gap-2 max-h-[13.5rem] overflow-y-auto pr-1">
+        <div className="grid grid-cols-8 gap-2 max-h-[19.5rem] overflow-y-auto p-[3px]">
           {images.map((img) => (
             <div
               key={img.id}

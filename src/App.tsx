@@ -6,6 +6,7 @@ import { ProcessingControls } from "@/components/ProcessingControls";
 import { ImagePreview } from "@/components/ImagePreview";
 import { ResultsTable } from "@/components/ResultsTable";
 import { useImageProcessor } from "@/hooks/useImageProcessor";
+import UTIF from "utif2";
 import { downloadCSV } from "@/lib/csvExport";
 import { DEFAULT_PARAMS } from "@/lib/types";
 import { cn } from "@/lib/utils";
@@ -23,7 +24,7 @@ function App() {
   const [annotatedUrl, setAnnotatedUrl] = useState<string | undefined>();
   const [normalizedUrl, setNormalizedUrl] = useState<string | undefined>();
   const [previewProcessing, setPreviewProcessing] = useState(false);
-  const [clickMode, setClickMode] = useState<"off" | "green" | "red">("off");
+  const [clickMode, setClickMode] = useState<"off" | "green" | "red" | "remove-green" | "remove-red">("off");
   const [manualCells, setManualCells] = useState<Map<string, ManualCell[]>>(new Map());
   const [imageNaturalSize, setImageNaturalSize] = useState<{ width: number; height: number } | undefined>();
   const [liveResult, setLiveResult] = useState<CellCountResult | undefined>();
@@ -138,6 +139,7 @@ function App() {
           red: res.red,
           total: res.total,
           viabilityPct: res.viabilityPct,
+          confidence: res.confidence,
         };
 
         setImages((prev) =>
@@ -178,8 +180,8 @@ function App() {
     setBatchRunning(false);
     setBatchProgress(null);
 
-    // Restart worker to reclaim WASM memory after batch
-    await restartWorker();
+    // Restart worker to reclaim WASM memory after batch (non-blocking)
+    restartWorker().catch((e) => console.warn("Worker restart failed:", e));
   }, [ready, cacheAndPreview, clearCache, getParamsForImage, restartWorker]);
 
   useEffect(() => {
@@ -190,7 +192,7 @@ function App() {
 
   // ── Debounced real-time threshold update ───────────────────────────
   const runFastPreview = useCallback(async (p: ProcessingParams) => {
-    if (!selectedImage || !ready) return;
+    if (!selectedImage || !ready || analyzingRef.current) return;
 
     if (cachedForImageRef.current !== selectedImage.name) {
       setPreviewProcessing(true);
@@ -205,6 +207,7 @@ function App() {
           imageName: selectedImage.name,
           green: res.green, red: res.red,
           total: res.total, viabilityPct: res.viabilityPct,
+          confidence: res.confidence,
         };
         setLiveResult(result);
         setImages((prev) =>
@@ -228,6 +231,7 @@ function App() {
           imageName: selectedImage.name,
           green: res.green, red: res.red,
           total: res.total, viabilityPct: res.viabilityPct,
+          confidence: res.confidence,
         };
         setLiveResult(result);
         setImages((prev) =>
@@ -255,14 +259,40 @@ function App() {
   }, [activeParams, selectedImage?.id, ready, batchRunning, runFastPreview]);
 
   // ── Image management ──────────────────────────────────────────────
-  const handleImagesAdded = useCallback((files: File[]) => {
-    const newImages: LoadedImage[] = files.map((f) => ({
-      id: `img-${++idCounter}`,
-      file: f,
-      name: f.name,
-      previewUrl: URL.createObjectURL(f),
-      analysisStatus: "pending" as const,
-    }));
+  const handleImagesAdded = useCallback(async (files: File[]) => {
+    const newImages: LoadedImage[] = [];
+    for (const f of files) {
+      const ext = f.name.toLowerCase();
+      const isTiff = ext.endsWith(".tif") || ext.endsWith(".tiff") || f.type === "image/tiff";
+      let previewUrl: string;
+
+      if (isTiff) {
+        try {
+          const buf = await f.arrayBuffer();
+          const ifds = UTIF.decode(buf);
+          UTIF.decodeImage(buf, ifds[0]);
+          const rgba = UTIF.toRGBA8(ifds[0]);
+          const canvas = document.createElement("canvas");
+          canvas.width = ifds[0].width;
+          canvas.height = ifds[0].height;
+          const ctx = canvas.getContext("2d")!;
+          ctx.putImageData(new ImageData(new Uint8ClampedArray(rgba), ifds[0].width, ifds[0].height), 0, 0);
+          previewUrl = canvas.toDataURL("image/jpeg", 0.7);
+        } catch {
+          previewUrl = "";
+        }
+      } else {
+        previewUrl = URL.createObjectURL(f);
+      }
+
+      newImages.push({
+        id: `img-${++idCounter}`,
+        file: f,
+        name: f.name,
+        previewUrl,
+        analysisStatus: "pending" as const,
+      });
+    }
     setImages((prev) => [...prev, ...newImages]);
     if (!selectedId && newImages.length > 0) {
       setSelectedId(newImages[0].id);
@@ -322,6 +352,18 @@ function App() {
     });
   }, [selectedImage]);
 
+  const handleManualCellRemove = useCallback((index: number) => {
+    if (!selectedImage) return;
+    setManualCells((prev) => {
+      const next = new Map(prev);
+      const existing = next.get(selectedImage.id) || [];
+      if (index >= 0 && index < existing.length) {
+        next.set(selectedImage.id, existing.filter((_, i) => i !== index));
+      }
+      return next;
+    });
+  }, [selectedImage]);
+
   const handleUndoManualCell = useCallback(() => {
     if (!selectedImage) return;
     setManualCells((prev) => {
@@ -334,7 +376,7 @@ function App() {
     });
   }, [selectedImage]);
 
-  const handleRetryFailed = useCallback(() => {
+  const handleRetryFailed = useCallback(async () => {
     const failed = images.filter((i) => i.analysisStatus === "failed");
     if (failed.length === 0 || batchRunning) return;
 
@@ -346,8 +388,12 @@ function App() {
       )
     );
     analyzeQueueRef.current.push(...failed);
-    if (ready && !analyzingRef.current) processAnalyzeQueue();
-  }, [images, batchRunning, ready, processAnalyzeQueue]);
+
+    if (!ready) {
+      await restartWorker();
+    }
+    if (!analyzingRef.current) processAnalyzeQueue();
+  }, [images, batchRunning, ready, restartWorker, processAnalyzeQueue]);
 
   const handleExportCSV = useCallback(() => {
     if (allResults.length === 0) return;
@@ -374,7 +420,6 @@ function App() {
 
   const doneCount = images.filter((i) => i.analysisStatus === "done").length;
   const failedCount = images.filter((i) => i.analysisStatus === "failed").length;
-  const pendingCount = images.filter((i) => i.analysisStatus === "pending" || i.analysisStatus === "analyzing").length;
 
   return (
     <div className="min-h-screen bg-background">
@@ -387,7 +432,7 @@ function App() {
             <div>
               <h1 className="text-lg font-bold tracking-tight">HEKounter</h1>
               <p className="text-[11px] text-muted-foreground -mt-0.5">
-                Fluorescence Cell Viability Counter
+                Fluorescence Cell Viability Counter <span className="opacity-50">v1.0.0</span>
               </p>
             </div>
           </div>
@@ -463,48 +508,8 @@ function App() {
           customParamsIds={new Set(imageParamsMap.keys())}
         />
 
-        <div className="grid grid-cols-12 gap-6">
-          <div className="col-span-8 space-y-4">
-            {selectedImage && annotatedUrl && (
-              <div className="flex items-center gap-2 p-2 rounded-lg border border-border bg-card">
-                <span className="text-xs text-muted-foreground mr-1">
-                  <MousePointer className="h-3.5 w-3.5 inline mr-1" />
-                  Manual add:
-                </span>
-                <Button
-                  size="sm"
-                  variant="outline"
-                  className={cn(
-                    "text-xs h-7 border-green-600 text-green-400 hover:text-white hover:bg-green-700",
-                    clickMode === "green" && "bg-green-600 text-white ring-2 ring-green-400"
-                  )}
-                  onClick={() => setClickMode(clickMode === "green" ? "off" : "green")}
-                >
-                  Green (Live)
-                </Button>
-                <Button
-                  size="sm"
-                  variant="outline"
-                  className={cn(
-                    "text-xs h-7 border-red-600 text-red-400 hover:text-white hover:bg-red-700",
-                    clickMode === "red" && "bg-red-600 text-white ring-2 ring-red-400"
-                  )}
-                  onClick={() => setClickMode(clickMode === "red" ? "off" : "red")}
-                >
-                  Red (Dead)
-                </Button>
-                {currentManualCells.length > 0 && (
-                  <>
-                    <div className="h-4 w-px bg-border mx-1" />
-                    <Button size="sm" variant="ghost" className="text-xs h-7" onClick={handleUndoManualCell}>
-                      <Undo2 className="h-3 w-3 mr-1" />
-                      Undo ({currentManualCells.length})
-                    </Button>
-                  </>
-                )}
-              </div>
-            )}
-
+        <div id="image-preview-section" className="grid grid-cols-12 gap-6">
+          <div className="col-span-8">
             <ImagePreview
               originalUrl={selectedImage?.previewUrl}
               normalizedUrl={normalizedUrl}
@@ -515,12 +520,13 @@ function App() {
               clickMode={clickMode}
               manualCells={currentManualCells}
               onManualCellAdd={handleManualCellAdd}
+              onManualCellRemove={handleManualCellRemove}
               imageNaturalSize={imageNaturalSize}
             />
           </div>
 
           <div className="col-span-4">
-            <div className="sticky top-20 space-y-4">
+            <div className="sticky top-20 space-y-3">
               <div className="rounded-lg border border-border bg-card p-4">
                 <ProcessingControls
                   params={activeParams}
@@ -533,52 +539,87 @@ function App() {
                 />
               </div>
 
-              {images.length > 0 && (
-                <div className="rounded-lg border border-border bg-card p-3">
-                  <h3 className="text-xs font-semibold mb-2 text-muted-foreground uppercase tracking-wider">
-                    Image Status ({doneCount}/{images.length})
-                    {pendingCount > 0 && !batchRunning && (
-                      <span className="text-yellow-400 ml-1">· {pendingCount} queued</span>
-                    )}
+              {selectedImage && annotatedUrl && (
+                <div className="rounded-lg border border-border bg-card p-3 space-y-2.5">
+                  <h3 className="text-sm font-semibold flex items-center gap-1.5">
+                    <MousePointer className="h-3.5 w-3.5 text-muted-foreground" />
+                    Manual annotation
                   </h3>
-                  <div className="space-y-0.5">
-                    {images.map((img) => (
-                      <button
-                        key={img.id}
-                        onClick={() => handleImageSelect(img.id)}
+
+                  <div className="space-y-1.5">
+                    <div className="flex items-center gap-1.5">
+                      <Button
+                        size="sm"
+                        variant="outline"
                         className={cn(
-                          "w-full text-left px-2 py-1 rounded text-xs flex items-center gap-2 transition-colors cursor-pointer",
-                          selectedId === img.id
-                            ? "bg-primary/10 text-foreground"
-                            : "hover:bg-muted/50 text-muted-foreground"
+                          "text-xs h-7 px-2.5 flex-1 font-normal border-green-600 text-green-400 hover:text-white hover:bg-green-700",
+                          clickMode === "green" && "bg-green-600 text-white ring-2 ring-green-400"
                         )}
+                        onClick={() => setClickMode(clickMode === "green" ? "off" : "green")}
                       >
-                        <span className={cn(
-                          "h-2 w-2 rounded-full shrink-0",
-                          img.analysisStatus === "done" && "bg-success",
-                          img.analysisStatus === "analyzing" && "bg-primary animate-pulse",
-                          img.analysisStatus === "pending" && "bg-muted-foreground/40",
-                          img.analysisStatus === "failed" && "bg-danger",
-                        )} />
-                        <span className="truncate flex-1">{img.name}</span>
-                        {img.analysisStatus === "done" && img.result && (
-                          <span className="text-[10px] tabular-nums text-muted-foreground shrink-0">
-                            {img.result.green + img.result.red}
-                          </span>
+                        <span className="font-mono">+</span> Green
+                      </Button>
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        className={cn(
+                          "text-xs h-7 px-2.5 flex-1 font-normal border-red-600 text-red-400 hover:text-white hover:bg-red-700",
+                          clickMode === "red" && "bg-red-600 text-white ring-2 ring-red-400"
                         )}
-                        {img.analysisStatus === "failed" && (
-                          <span className="text-[10px] text-danger shrink-0">error</span>
+                        onClick={() => setClickMode(clickMode === "red" ? "off" : "red")}
+                      >
+                        <span className="font-mono">+</span> Red
+                      </Button>
+                    </div>
+
+                    <div className="flex items-center gap-1.5">
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        className={cn(
+                          "text-xs h-7 px-2.5 flex-1 font-normal border-green-600 text-green-400 hover:text-white hover:bg-green-700",
+                          clickMode === "remove-green" && "bg-green-600 text-white ring-2 ring-green-400"
                         )}
-                      </button>
-                    ))}
+                        onClick={() => setClickMode(clickMode === "remove-green" ? "off" : "remove-green")}
+                      >
+                        <span className="font-mono">&minus;</span> Green
+                      </Button>
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        className={cn(
+                          "text-xs h-7 px-2.5 flex-1 font-normal border-red-600 text-red-400 hover:text-white hover:bg-red-700",
+                          clickMode === "remove-red" && "bg-red-600 text-white ring-2 ring-red-400"
+                        )}
+                        onClick={() => setClickMode(clickMode === "remove-red" ? "off" : "remove-red")}
+                      >
+                        <span className="font-mono">&minus;</span> Red
+                      </Button>
+                    </div>
                   </div>
+
+                  {currentManualCells.length > 0 && (
+                    <div className="pt-1 border-t border-border/50">
+                      <Button size="sm" variant="ghost" className="text-xs h-7 w-full" onClick={handleUndoManualCell}>
+                        <Undo2 className="h-3 w-3 mr-1" />
+                        Undo ({currentManualCells.length})
+                      </Button>
+                    </div>
+                  )}
                 </div>
               )}
             </div>
           </div>
         </div>
 
-        {allResults.length > 0 && <ResultsTable results={allResults} />}
+        {images.length > 0 && (
+          <ResultsTable
+            images={images}
+            manualCells={manualCells}
+            selectedId={selectedId}
+            onImageSelect={handleImageSelect}
+          />
+        )}
       </main>
     </div>
   );

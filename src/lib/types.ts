@@ -22,6 +22,7 @@ export interface CellCountResult {
   red: number;
   total: number;
   viabilityPct: number;
+  confidence: number;
   annotatedImageData?: string;
 }
 

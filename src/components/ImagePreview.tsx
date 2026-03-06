@@ -9,9 +9,10 @@ interface ImagePreviewProps {
   result?: CellCountResult;
   imageName?: string;
   processing?: boolean;
-  clickMode: "off" | "green" | "red";
+  clickMode: "off" | "green" | "red" | "remove-green" | "remove-red";
   manualCells: ManualCell[];
   onManualCellAdd?: (cell: ManualCell) => void;
+  onManualCellRemove?: (index: number) => void;
   imageNaturalSize?: { width: number; height: number };
 }
 
@@ -25,6 +26,7 @@ export function ImagePreview({
   clickMode,
   manualCells,
   onManualCellAdd,
+  onManualCellRemove,
   imageNaturalSize,
 }: ImagePreviewProps) {
   const svgRef = useRef<SVGSVGElement>(null);
@@ -32,7 +34,7 @@ export function ImagePreview({
 
   const handleSvgClick = useCallback(
     (e: React.MouseEvent<SVGSVGElement>) => {
-      if (clickMode === "off" || !onManualCellAdd || !svgRef.current) return;
+      if (clickMode === "off" || !svgRef.current) return;
 
       const svg = svgRef.current;
       const pt = svg.createSVGPoint();
@@ -49,9 +51,27 @@ export function ImagePreview({
       const natH = imageNaturalSize?.height || imgRef.current?.naturalHeight || 1;
       if (x < 0 || y < 0 || x > natW || y > natH) return;
 
-      onManualCellAdd({ x, y, type: clickMode });
+      if (clickMode === "green" || clickMode === "red") {
+        onManualCellAdd?.({ x, y, type: clickMode });
+      } else if (clickMode === "remove-green" || clickMode === "remove-red") {
+        const targetType = clickMode === "remove-green" ? "green" : "red";
+        const SNAP_RADIUS = 30;
+        let bestIdx = -1;
+        let bestDist = Infinity;
+        manualCells.forEach((cell, idx) => {
+          if (cell.type !== targetType) return;
+          const dist = Math.hypot(cell.x - x, cell.y - y);
+          if (dist < bestDist) {
+            bestDist = dist;
+            bestIdx = idx;
+          }
+        });
+        if (bestIdx >= 0 && bestDist <= SNAP_RADIUS) {
+          onManualCellRemove?.(bestIdx);
+        }
+      }
     },
-    [clickMode, onManualCellAdd, imageNaturalSize]
+    [clickMode, onManualCellAdd, onManualCellRemove, imageNaturalSize, manualCells]
   );
 
   if (!originalUrl) {
@@ -65,7 +85,9 @@ export function ImagePreview({
   }
 
   const defaultTab = annotatedUrl ? "annotated" : normalizedUrl ? "normalized" : "original";
-  const cursorClass = clickMode !== "off" ? "cursor-crosshair" : "";
+  const isAddMode = clickMode === "green" || clickMode === "red";
+  const isRemoveMode = clickMode === "remove-green" || clickMode === "remove-red";
+  const cursorClass = isAddMode ? "cursor-crosshair" : isRemoveMode ? "cursor-pointer" : "";
 
   const manualGreen = manualCells.filter((c) => c.type === "green").length;
   const manualRed = manualCells.filter((c) => c.type === "red").length;

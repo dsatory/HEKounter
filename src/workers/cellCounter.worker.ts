@@ -105,6 +105,13 @@ function subtractBackground(cv: any, rgb: any): any {
 }
 
 // ── Fast detection (contour-based, no watershed) ────────────────────────
+interface DetectedCell {
+  x: number;
+  y: number;
+  area: number;
+  circularity: number;
+}
+
 function detectCellsFast(
   cv: any,
   hsv: any,
@@ -112,7 +119,7 @@ function detectCellsFast(
   threshold: number,
   minArea: number,
   maxArea: number
-): Array<{ x: number; y: number; area: number }> {
+): DetectedCell[] {
   let mask = cv.Mat.zeros(hsv.rows, hsv.cols, cv.CV_8U);
 
   for (const [hLow, hHigh] of hueRanges) {
@@ -132,17 +139,20 @@ function detectCellsFast(
   const hierarchy = new cv.Mat();
   cv.findContours(mask, contours, hierarchy, cv.RETR_EXTERNAL, cv.CHAIN_APPROX_SIMPLE);
 
-  const cells: Array<{ x: number; y: number; area: number }> = [];
+  const cells: DetectedCell[] = [];
   for (let i = 0; i < contours.size(); i++) {
     const cnt = contours.get(i);
     const area = cv.contourArea(cnt);
     if (area >= minArea && area <= maxArea) {
       const moments = cv.moments(cnt);
       if (moments.m00 > 0) {
+        const perimeter = cv.arcLength(cnt, true);
+        const circularity = perimeter > 0 ? (4 * Math.PI * area) / (perimeter * perimeter) : 0;
         cells.push({
           x: Math.round(moments.m10 / moments.m00),
           y: Math.round(moments.m01 / moments.m00),
           area,
+          circularity: Math.min(circularity, 1),
         });
       }
     }
@@ -159,6 +169,27 @@ function median(arr: number[]): number {
   const sorted = [...arr].sort((a, b) => a - b);
   const mid = Math.floor(sorted.length / 2);
   return sorted.length % 2 !== 0 ? sorted[mid] : (sorted[mid - 1] + sorted[mid]) / 2;
+}
+
+function computeConfidence(allCells: DetectedCell[], estimatedCount: number): number {
+  if (allCells.length === 0) return 100;
+
+  // 1. Circularity: avg circularity across all contours (0–1, 1 = perfect circle)
+  const avgCirc = allCells.reduce((s, c) => s + c.circularity, 0) / allCells.length;
+
+  // 2. Size uniformity: 1 - coefficient of variation of areas (clamped to 0–1)
+  const areas = allCells.map((c) => c.area);
+  const meanArea = areas.reduce((s, a) => s + a, 0) / areas.length;
+  const variance = areas.reduce((s, a) => s + (a - meanArea) ** 2, 0) / areas.length;
+  const cv = meanArea > 0 ? Math.sqrt(variance) / meanArea : 1;
+  const sizeUniformity = Math.max(0, 1 - cv);
+
+  // 3. Non-clump ratio: how many of the estimated cells were direct detections vs inferred from clumps
+  const rawCount = allCells.length;
+  const nonClumpRatio = estimatedCount > 0 ? Math.min(rawCount / estimatedCount, 1) : 1;
+
+  const score = avgCirc * 0.3 + sizeUniformity * 0.3 + nonClumpRatio * 0.4;
+  return Math.round(Math.max(0, Math.min(100, score * 100)));
 }
 
 function estimateWithClumps(cells: Array<{ x: number; y: number; area: number }>): number {
@@ -380,6 +411,7 @@ const workerApi = {
     red: number;
     total: number;
     viabilityPct: number;
+    confidence: number;
     greenCells: Array<{ x: number; y: number; area: number }>;
     redCells: Array<{ x: number; y: number; area: number }>;
   } | null> {
@@ -403,6 +435,9 @@ const workerApi = {
     const total = greenCount + redCount;
     const viabilityPct = total > 0 ? (greenCount / total) * 100 : 0;
 
+    const allCells = [...greenCells, ...redCells];
+    const confidence = computeConfidence(allCells, total);
+
     const annotated = new cv.Mat();
     cv.cvtColor(cachedNormalized, annotated, cv.COLOR_RGB2RGBA);
     for (const c of greenCells) {
@@ -425,6 +460,7 @@ const workerApi = {
       red: redCount,
       total,
       viabilityPct,
+      confidence,
       greenCells,
       redCells,
     };
@@ -465,7 +501,7 @@ const workerApi = {
 
     deleteSafe(src, rgb, bgSub, rgbSrc, enhanced, blurred, hsv, greenMask, redMask);
 
-    return { imageName, green, red, total, viabilityPct };
+    return { imageName, green, red, total, viabilityPct, confidence: 0 };
   },
 };
 
