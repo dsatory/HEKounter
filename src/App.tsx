@@ -428,10 +428,10 @@ function App() {
                 </span>
                 <Button
                   size="sm"
-                  variant={clickMode === "green" ? "default" : "outline"}
+                  variant="outline"
                   className={cn(
-                    "text-xs h-7",
-                    clickMode === "green" && "bg-green-600 hover:bg-green-700 text-white"
+                    "text-xs h-7 border-green-600 text-green-400 hover:text-white hover:bg-green-700",
+                    clickMode === "green" && "bg-green-600 text-white ring-2 ring-green-400"
                   )}
                   onClick={() => setClickMode(clickMode === "green" ? "off" : "green")}
                 >
@@ -439,10 +439,10 @@ function App() {
                 </Button>
                 <Button
                   size="sm"
-                  variant={clickMode === "red" ? "default" : "outline"}
+                  variant="outline"
                   className={cn(
-                    "text-xs h-7",
-                    clickMode === "red" && "bg-red-600 hover:bg-red-700 text-white"
+                    "text-xs h-7 border-red-600 text-red-400 hover:text-white hover:bg-red-700",
+                    clickMode === "red" && "bg-red-600 text-white ring-2 ring-red-400"
                   )}
                   onClick={() => setClickMode(clickMode === "red" ? "off" : "red")}
                 >
