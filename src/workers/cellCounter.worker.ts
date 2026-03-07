@@ -338,104 +338,74 @@ function detectNLRs(
   const enhanced = new cv.Mat();
   clahe.apply(gray, enhanced);
 
-  // Very heavy Gaussian blur eliminates all cell-level features;
-  // only NLR-scale intensity boundaries survive.
-  let blurK = Math.max(31, Math.round(minRadius * 0.6));
+  // Moderate blur: suppress cell noise but preserve NLR edges
+  let blurK = Math.max(9, Math.round(minRadius * 0.25));
   if (blurK % 2 === 0) blurK++;
   const blurred = new cv.Mat();
   cv.GaussianBlur(enhanced, blurred, new cv.Size(blurK, blurK), 0);
 
-  const cannyLow = Math.max(5, sensitivity);
-  const cannyHigh = cannyLow * 3;
-  const edges = new cv.Mat();
-  cv.Canny(blurred, edges, cannyLow, cannyHigh);
+  // HoughCircles: robust circle detection from partial/noisy edges
+  const circles = new cv.Mat();
+  const cannyHigh = Math.max(50, 150 - sensitivity);
+  const accThreshold = Math.max(10, 60 - Math.round(sensitivity * 0.7));
 
+  cv.HoughCircles(
+    blurred,
+    circles,
+    cv.HOUGH_GRADIENT,
+    1.5,                  // dp (accumulator resolution ratio)
+    minRadius,            // minDist between circle centers
+    cannyHigh,            // param1 (upper Canny threshold)
+    accThreshold,         // param2 (accumulator threshold; lower = more circles)
+    minRadius,
+    maxRadius,
+  );
+
+  // Build edge map once for integrity scoring
+  const edges = new cv.Mat();
+  cv.Canny(blurred, edges, Math.max(10, sensitivity), cannyHigh);
   const dilateEl = cv.getStructuringElement(cv.MORPH_ELLIPSE, new cv.Size(3, 3));
   cv.dilate(edges, edges, dilateEl);
-  cv.morphologyEx(edges, edges, cv.MORPH_CLOSE, dilateEl);
-
-  const contours = new cv.MatVector();
-  const hierarchy = new cv.Mat();
-  cv.findContours(edges, contours, hierarchy, cv.RETR_LIST, cv.CHAIN_APPROX_NONE);
-
-  const minPerimeter = 2 * Math.PI * minRadius * 0.3;
-
-  interface CircleCandidate {
-    cx: number;
-    cy: number;
-    radius: number;
-    score: number;
-  }
-
-  const candidates: CircleCandidate[] = [];
-
-  for (let i = 0; i < contours.size(); i++) {
-    const cnt = contours.get(i);
-    const nPts = cnt.rows;
-
-    if (nPts < 20) { cnt.delete(); continue; }
-
-    const perimeter = cv.arcLength(cnt, true);
-    if (perimeter < minPerimeter) { cnt.delete(); continue; }
-
-    const data = cnt.data32S;
-    let sumX = 0, sumY = 0;
-    for (let p = 0; p < nPts; p++) {
-      sumX += data[p * 2];
-      sumY += data[p * 2 + 1];
-    }
-    const cxF = sumX / nPts;
-    const cyF = sumY / nPts;
-
-    let sumDist = 0, sumDist2 = 0;
-    for (let p = 0; p < nPts; p++) {
-      const dx = data[p * 2] - cxF;
-      const dy = data[p * 2 + 1] - cyF;
-      const dist = Math.sqrt(dx * dx + dy * dy);
-      sumDist += dist;
-      sumDist2 += dist * dist;
-    }
-    const meanDist = sumDist / nPts;
-    const variance = sumDist2 / nPts - meanDist * meanDist;
-    const stdDist = Math.sqrt(Math.max(0, variance));
-
-    const cvRatio = meanDist > 0 ? stdDist / meanDist : 1;
-    if (cvRatio > 0.15) { cnt.delete(); continue; }
-
-    const r = Math.round(meanDist);
-    if (r < minRadius || r > maxRadius) { cnt.delete(); continue; }
-
-    const arcCoverage = Math.min(1, perimeter / (2 * Math.PI * r));
-    const score = arcCoverage * (1 - cvRatio * 5);
-
-    candidates.push({ cx: Math.round(cxF), cy: Math.round(cyF), radius: r, score });
-    cnt.delete();
-  }
-
-  // Non-maximum suppression
-  candidates.sort((a, b) => b.score - a.score);
-  const kept: CircleCandidate[] = [];
-  for (const c of candidates) {
-    const tooClose = kept.some(k => {
-      const dist = Math.sqrt((c.cx - k.cx) ** 2 + (c.cy - k.cy) ** 2);
-      return dist < Math.min(c.radius, k.radius) * 0.7;
-    });
-    if (!tooClose) kept.push(c);
-  }
 
   const detected: DetectedNLR[] = [];
-  for (const c of kept) {
-    if (c.cx - c.radius < edgeMargin || c.cx + c.radius >= origW - edgeMargin ||
-        c.cy - c.radius < edgeMargin || c.cy + c.radius >= origH - edgeMargin) {
+
+  for (let i = 0; i < circles.cols; i++) {
+    const cx = Math.round(circles.data32F[i * 3]);
+    const cy = Math.round(circles.data32F[i * 3 + 1]);
+    const radius = Math.round(circles.data32F[i * 3 + 2]);
+
+    // Skip circles touching the image edge
+    if (cx - radius < edgeMargin || cx + radius >= origW - edgeMargin ||
+        cy - radius < edgeMargin || cy + radius >= origH - edgeMargin) {
       continue;
     }
-    const integrity = Math.round(c.score * 100);
+
+    // Score integrity: fraction of circumference samples near an edge pixel
+    let edgeHits = 0;
+    const nSamples = 36;
+    for (let s = 0; s < nSamples; s++) {
+      const angle = (2 * Math.PI * s) / nSamples;
+      const px = Math.round(cx + radius * Math.cos(angle));
+      const py = Math.round(cy + radius * Math.sin(angle));
+      let found = false;
+      for (let dy = -2; dy <= 2 && !found; dy++) {
+        for (let dx = -2; dx <= 2 && !found; dx++) {
+          const nx = px + dx, ny = py + dy;
+          if (nx >= 0 && nx < origW && ny >= 0 && ny < origH) {
+            if (edges.ucharAt(ny, nx) > 0) found = true;
+          }
+        }
+      }
+      if (found) edgeHits++;
+    }
+
+    const integrity = Math.round((edgeHits / nSamples) * 100);
     if (integrity >= integrityThreshold) {
-      detected.push({ cx: c.cx, cy: c.cy, radius: c.radius, integrity });
+      detected.push({ cx, cy, radius, integrity });
     }
   }
 
-  deleteSafe(gray, enhanced, blurred, edges, dilateEl, contours, hierarchy, clahe);
+  deleteSafe(gray, enhanced, blurred, circles, edges, dilateEl, clahe);
 
   return detected;
 }
