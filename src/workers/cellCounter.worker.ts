@@ -331,6 +331,10 @@ function detectNLRs(
   const origW = originalRgb.cols;
   const origH = originalRgb.rows;
 
+  console.log("[NLR] detectNLRs called:", {
+    origW, origH, minRadius, maxRadius, edgeMargin, integrityThreshold, sensitivity,
+  });
+
   const gray = new cv.Mat();
   cv.cvtColor(originalRgb, gray, cv.COLOR_RGB2GRAY);
 
@@ -338,36 +342,45 @@ function detectNLRs(
   const enhanced = new cv.Mat();
   clahe.apply(gray, enhanced);
 
-  // Moderate blur: suppress cell noise but preserve NLR edges
-  let blurK = Math.max(9, Math.round(minRadius * 0.25));
+  // Light blur: suppress cell noise but preserve NLR edges
+  let blurK = Math.max(5, Math.round(minRadius * 0.15));
   if (blurK % 2 === 0) blurK++;
   const blurred = new cv.Mat();
   cv.GaussianBlur(enhanced, blurred, new cv.Size(blurK, blurK), 0);
 
   // HoughCircles: robust circle detection from partial/noisy edges
-  const circles = new cv.Mat();
-  const cannyHigh = Math.max(50, 150 - sensitivity);
-  const accThreshold = Math.max(10, 60 - Math.round(sensitivity * 0.7));
+  // sensitivity (10-80): higher = detect more circles
+  const cannyHigh = Math.max(30, 100 - sensitivity);
+  const accThreshold = Math.max(8, 35 - Math.round(sensitivity * 0.35));
 
+  console.log("[NLR] HoughCircles params:", {
+    blurK, cannyHigh, accThreshold, dp: 1, minDist: minRadius * 0.8,
+  });
+
+  const circles = new cv.Mat();
   cv.HoughCircles(
     blurred,
     circles,
     cv.HOUGH_GRADIENT,
-    1.5,                  // dp (accumulator resolution ratio)
-    minRadius,            // minDist between circle centers
-    cannyHigh,            // param1 (upper Canny threshold)
-    accThreshold,         // param2 (accumulator threshold; lower = more circles)
+    1,                        // dp (full resolution accumulator)
+    minRadius * 0.8,          // minDist (allow close NLRs)
+    cannyHigh,                // param1 (upper Canny threshold)
+    accThreshold,             // param2 (accumulator threshold; lower = more circles)
     minRadius,
     maxRadius,
   );
 
+  console.log("[NLR] HoughCircles found:", circles.cols, "raw circles");
+
   // Build edge map once for integrity scoring
   const edges = new cv.Mat();
-  cv.Canny(blurred, edges, Math.max(10, sensitivity), cannyHigh);
+  cv.Canny(blurred, edges, Math.max(5, Math.round(sensitivity * 0.5)), cannyHigh);
   const dilateEl = cv.getStructuringElement(cv.MORPH_ELLIPSE, new cv.Size(3, 3));
   cv.dilate(edges, edges, dilateEl);
 
   const detected: DetectedNLR[] = [];
+  let skippedEdge = 0;
+  let skippedIntegrity = 0;
 
   for (let i = 0; i < circles.cols; i++) {
     const cx = Math.round(circles.data32F[i * 3]);
@@ -377,6 +390,7 @@ function detectNLRs(
     // Skip circles touching the image edge
     if (cx - radius < edgeMargin || cx + radius >= origW - edgeMargin ||
         cy - radius < edgeMargin || cy + radius >= origH - edgeMargin) {
+      skippedEdge++;
       continue;
     }
 
@@ -388,8 +402,8 @@ function detectNLRs(
       const px = Math.round(cx + radius * Math.cos(angle));
       const py = Math.round(cy + radius * Math.sin(angle));
       let found = false;
-      for (let dy = -2; dy <= 2 && !found; dy++) {
-        for (let dx = -2; dx <= 2 && !found; dx++) {
+      for (let dy = -3; dy <= 3 && !found; dy++) {
+        for (let dx = -3; dx <= 3 && !found; dx++) {
           const nx = px + dx, ny = py + dy;
           if (nx >= 0 && nx < origW && ny >= 0 && ny < origH) {
             if (edges.ucharAt(ny, nx) > 0) found = true;
@@ -402,8 +416,14 @@ function detectNLRs(
     const integrity = Math.round((edgeHits / nSamples) * 100);
     if (integrity >= integrityThreshold) {
       detected.push({ cx, cy, radius, integrity });
+    } else {
+      skippedIntegrity++;
     }
   }
+
+  console.log("[NLR] filtering:", {
+    rawCircles: circles.cols, skippedEdge, skippedIntegrity, detected: detected.length,
+  });
 
   deleteSafe(gray, enhanced, blurred, circles, edges, dilateEl, clahe);
 

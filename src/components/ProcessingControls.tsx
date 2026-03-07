@@ -220,7 +220,7 @@ export function ProcessingControls({
             <ParamSlider
               label="Min NLR Radius (px)"
               value={params.nlrMinRadius}
-              min={20}
+              min={10}
               max={300}
               step={5}
               onChange={(v) => update("nlrMinRadius", v)}
@@ -229,7 +229,7 @@ export function ProcessingControls({
             <ParamSlider
               label="Max NLR Radius (px)"
               value={params.nlrMaxRadius}
-              min={50}
+              min={30}
               max={500}
               step={5}
               onChange={(v) => update("nlrMaxRadius", v)}
@@ -246,16 +246,16 @@ export function ProcessingControls({
             <ParamSlider
               label="Integrity Threshold (%)"
               value={params.nlrIntegrity}
-              min={10}
+              min={5}
               max={90}
               step={5}
               onChange={(v) => update("nlrIntegrity", v)}
             />
             <ParamSlider
-              label="Hough Sensitivity"
+              label="Sensitivity"
               value={params.nlrSensitivity}
               min={10}
-              max={80}
+              max={100}
               step={5}
               onChange={(v) => update("nlrSensitivity", v)}
             />

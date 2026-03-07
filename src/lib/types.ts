@@ -21,11 +21,11 @@ export const DEFAULT_PARAMS: ProcessingParams = {
   greenThreshold: 40,
   redThreshold: 40,
   nlrMode: false,
-  nlrMinRadius: 50,
+  nlrMinRadius: 30,
   nlrMaxRadius: 200,
-  nlrEdgeMargin: 10,
-  nlrIntegrity: 30,
-  nlrSensitivity: 15,
+  nlrEdgeMargin: 5,
+  nlrIntegrity: 15,
+  nlrSensitivity: 40,
 };
 
 export interface NLRResult {
